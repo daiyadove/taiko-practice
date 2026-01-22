@@ -61,21 +61,121 @@ pip install -r requirements.txt
 
 ## 使い方
 
-### 1. 動画解析（譜面データ生成）
+### クイックスタート
+
+```bash
+# 1. 動画を public/videos/ に配置
+cp your_video.mp4 public/videos/
+
+# 2. 動画を解析して譜面データを生成
+source venv/bin/activate
+python scripts/analyze.py public/videos/your_video.mp4 -o public/score.json
+
+# 3. Remotion Studioでプレビュー
+npm start
+# ブラウザで http://localhost:3000 にアクセス
+
+# 4. 練習動画を出力
+npm run build
+# out/video.mp4 に出力されます
+```
+
+### 詳細な手順
+
+#### Step 1: 動画解析（譜面データ生成）
+
+演奏動画から打撃タイミングを検出し、譜面データを生成します。
 
 ```bash
 source venv/bin/activate
-python scripts/analyze.py <動画ファイル> -o score.json
+python scripts/analyze.py <動画ファイル> -o public/score.json
 ```
 
-### 2. 練習動画のプレビュー
+**オプション:**
+- `-o, --output`: 出力ファイルパス（デフォルト: score.json）
+- `--threshold`: 打撃検出の感度（0.0-1.0、デフォルト: 0.5）
+
+#### Step 2: 練習動画のプレビュー
+
+Remotion Studioを起動して、ブラウザでリアルタイムプレビューできます。
 
 ```bash
-npm start  # Remotion Studio起動
+npm start
 ```
 
-### 3. 練習動画の出力
+ブラウザで `http://localhost:3000` にアクセスすると：
+- 再生/一時停止ボタンで動画を制御
+- タイムラインをドラッグして任意の位置にジャンプ
+- フレーム単位での確認が可能
+
+#### Step 3: 練習動画の出力
+
+最終的な動画ファイルをレンダリングします。
 
 ```bash
-npm run build  # out/video.mp4 に出力
+npm run build
+```
+
+出力先: `out/video.mp4`（1920x1080、30fps）
+
+---
+
+## 譜面データ形式
+
+`public/score.json` の形式：
+
+```json
+{
+  "videoPath": "videos/your_video.mp4",
+  "duration": 60,
+  "fps": 30,
+  "notes": [
+    { "time": 0.5, "hand": "right" },
+    { "time": 1.0, "hand": "left" },
+    { "time": 1.5, "hand": "right" }
+  ]
+}
+```
+
+| フィールド | 型 | 説明 |
+|-----------|------|------|
+| `videoPath` | string | 元動画のパス（public/からの相対パス） |
+| `duration` | number | 動画の長さ（秒） |
+| `fps` | number | フレームレート |
+| `notes` | array | ノーツ（打撃）のリスト |
+| `notes[].time` | number | 打撃タイミング（秒） |
+| `notes[].hand` | "left" \| "right" | 叩く手 |
+
+---
+
+## UI仕様
+
+### 画面構成
+
+```
+┌─────────────────────────────────────┐
+│                                     │
+│           元動画エリア               │
+│         (演奏動画を表示)             │
+│                                     │
+├─────────────────────────────────────┤
+│  │  ●→  ●→  ●→               │
+│  │  ノーツが右から左へ流れる        │
+│  判定ライン                         │
+└─────────────────────────────────────┘
+```
+
+### ノーツの色分け
+
+- **右手**: 赤色 (#ef4444)
+- **左手**: 青色 (#3b82f6)
+
+### パラメータ調整
+
+`src/TaikoPractice.tsx` で以下の定数を変更できます：
+
+```typescript
+const JUDGE_LINE_X = 150;        // 判定ラインのX座標（px）
+const NOTE_APPROACH_TIME = 2;    // ノーツが到達するまでの時間（秒）
+const NOTE_AREA_HEIGHT = 200;    // ノーツUIエリアの高さ（px）
 ```
