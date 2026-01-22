@@ -1,0 +1,13 @@
+# 音声解析
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# 動画処理
+opencv-python>=4.8.0
+ffmpeg-python>=0.2.0
+
+# 数値計算
+numpy>=1.24.0
+
+# JSON出力（標準ライブラリだが明示）
+# json - built-in
