@@ -10,3 +10,5 @@ __pycache__/
 # テスト用動画（サイズが大きいためGit管理外）
 public/videos/*
 !public/videos/.gitkeep
+*.mp4
+score.json
