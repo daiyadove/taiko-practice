@@ -30,3 +30,52 @@
 ```
 演奏動画 → 動画解析 → 譜面データ生成 → Remotionで練習動画作成
 ```
+
+## セットアップ
+
+### 必要なシステム依存
+
+- Node.js (v18以上)
+- Python (v3.10以上)
+- ffmpeg (システムにインストール)
+
+```bash
+# Ubuntu/Debian
+sudo apt install ffmpeg
+
+# macOS
+brew install ffmpeg
+```
+
+### インストール
+
+```bash
+# Node.jsパッケージ
+npm install
+
+# Python仮想環境とパッケージ
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+## 使い方
+
+### 1. 動画解析（譜面データ生成）
+
+```bash
+source venv/bin/activate
+python scripts/analyze.py <動画ファイル> -o score.json
+```
+
+### 2. 練習動画のプレビュー
+
+```bash
+npm start  # Remotion Studio起動
+```
+
+### 3. 練習動画の出力
+
+```bash
+npm run build  # out/video.mp4 に出力
+```
