@@ -1,4 +1,5 @@
 import React from "react";
+import { Img, staticFile } from "remotion";
 import type { NoteHand } from "../types/score";
 
 interface NoteProps {
@@ -8,10 +9,13 @@ interface NoteProps {
 
 /**
  * ノーツ（流れてくる音符）
- * 左手=青、右手=赤
+ * 左手=blue_right_1.png、右手=red_left_1.png
  */
 export const Note: React.FC<NoteProps> = ({ x, hand }) => {
-  const color = hand === "left" ? "#3b82f6" : "#ef4444";
+  // 画像のパスを決定
+  const imageSrc = hand === "left" 
+    ? staticFile("images/notes/blue_right_1.png")
+    : staticFile("images/notes/red_left_1.png");
 
   return (
     <div
@@ -22,11 +26,16 @@ export const Note: React.FC<NoteProps> = ({ x, hand }) => {
         transform: "translateY(-50%)",
         width: 60,
         height: 60,
-        backgroundColor: color,
-        borderRadius: "50%",
-        border: "4px solid white",
-        boxShadow: `0 0 15px ${color}`,
       }}
-    />
+    >
+      <Img
+        src={imageSrc}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+        }}
+      />
+    </div>
   );
 };
