@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { Note } from "./components/Note";
 import { JudgeLine } from "./components/JudgeLine";
 import type { Score, Note as NoteType, NoteImageFile } from "./types/score";
+import { getHandFromImageFile } from "./types/score";
 import type { TaikoPracticeProps } from "./schema";
 
 // Remotion Studioのseek関数を使用する関数
@@ -107,13 +108,10 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     if (nearestNote && nearestNote.imageFile) {
       setSelectedImageFile(nearestNote.imageFile);
     } else if (nearestNote && !nearestNote.imageFile) {
-      // imageFileが指定されていない場合は、handに基づいてデフォルトを設定
-      const defaultImageFile: NoteImageFile = nearestNote.hand === "left" 
-        ? "red_left_1.png"
-        : "blue_right_1.png";
-      setSelectedImageFile(defaultImageFile);
+      // imageFileが指定されていない場合は、デフォルトを設定
+      setSelectedImageFile("red_left_1.png");
     }
-  }, [nearestNote?.time, nearestNote?.hand, nearestNote?.imageFile]);
+  }, [nearestNote?.time, nearestNote?.imageFile]);
   
   // ノーツを追加
   const addNote = () => {
@@ -121,7 +119,6 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     
     // ノーツ追加時は常にred_left_1.pngを使用
     const noteImageFile: NoteImageFile = "red_left_1.png";
-    const hand: "left" | "right" = "left";
     
     // 1フレーム後の時刻でノーツを追加
     const futureTime = currentTime + (1 / fps);
@@ -141,7 +138,6 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     
     const newNote: NoteType = {
       time: futureTime,
-      hand: hand,
       frame: futureFrame,
       imageFile: noteImageFile,
     };
@@ -154,9 +150,9 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   const deleteNote = () => {
     if (!score || !nearestNote) return;
     
-    // 最も近いノーツを削除（時間とhandが一致する最初のノーツ）
+    // 最も近いノーツを削除（時間とimageFileが一致する最初のノーツ）
     const noteIndex = score.notes.findIndex(
-      (note) => note.time === nearestNote.time && note.hand === nearestNote.hand
+      (note) => isSameNote(note, nearestNote)
     );
     
     if (noteIndex === -1) return;
@@ -170,11 +166,11 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   const updateNoteTime = () => {
     if (!score || !nearestNote) return;
     
-    // 最も近いノーツの時間を更新（時間とhandが一致する最初のノーツ）
+    // 最も近いノーツの時間を更新（時間とimageFileが一致する最初のノーツ）
     const updatedNotes = score.notes.map((note, index) => {
-      const isNearest = note.time === nearestNote.time && note.hand === nearestNote.hand;
+      const isNearest = isSameNote(note, nearestNote);
       // 最初に一致したノーツのみを更新
-      if (isNearest && score.notes.findIndex(n => n.time === nearestNote.time && n.hand === nearestNote.hand) === index) {
+      if (isNearest && score.notes.findIndex(n => isSameNote(n, nearestNote)) === index) {
         return {
           ...note,
           time: currentTime,
@@ -235,7 +231,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     
     // 現在のフレームの表示ノーツのキーを生成
     const currentVisibleKeys = new Set(
-      visibleNotes.map(note => `${note.time}-${note.hand}-${note.imageFile || 'default'}`)
+      visibleNotes.map(note => `${note.time}-${note.imageFile || 'default'}`)
     );
     
     // 前フレームで表示されていたが、現在は非表示になったノーツを検出
@@ -278,8 +274,13 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   
   // ノーツUIエリアの設定
   const notesAreaHeight = 200;
-  const judgeBoxSize = 110; // 判定枠のサイズ
   const judgeLineX = width * 0.25; // 判定ラインの位置（画面左から25%、左に寄せる）
+  
+  // ノーツが同じかどうかを判定するヘルパー関数
+  const isSameNote = (note1: NoteType, note2: NoteType): boolean => {
+    return note1.time === note2.time && 
+      (note1.imageFile === note2.imageFile || (!note1.imageFile && !note2.imageFile));
+  };
   
   // ノーツのx座標を計算する関数
   const calculateNoteX = (noteTime: number): number => {
@@ -352,16 +353,13 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
         {visibleNotes.map((note, index) => {
           const x = calculateNoteX(note.time);
           // 一番近いノーツかどうかを判定（未来のノーツのみ）
-          const isNearest = nearestNote && 
-            nearestNote.time === note.time && 
-            nearestNote.hand === note.hand &&
-            (nearestNote.imageFile === note.imageFile || (!nearestNote.imageFile && !note.imageFile));
+          const isNearest = nearestNote && isSameNote(note, nearestNote);
           
           return (
             <Note
               key={`${note.time}-${index}`}
               x={x}
-              hand={note.hand}
+              hand={getHandFromImageFile(note.imageFile)}
               imageFile={note.imageFile}
               onClick={() => handleNoteClick(note)}
               isSelected={isNearest || false}
@@ -408,23 +406,14 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
                 
                 // 一番近いノーツが存在する場合は、そのノーツの種類も変更
                 if (score && nearestNote) {
-                  // 画像ファイル名に基づいてhandを決定
-                  const newHand: "left" | "right" = newImageFile.includes("red_left")
-                    ? "left"
-                    : newImageFile.includes("blue_right") || newImageFile === "big.png"
-                    ? "right"
-                    : "right"; // デフォルト
-                  
                   const updatedNotes = score.notes.map((note, index) => {
-                    // 一番近いノーツを特定（時間とhandが一致する最初のノーツ）
-                    const isNearest = note.time === nearestNote.time && 
-                                     note.hand === nearestNote.hand &&
-                                     score.notes.findIndex(n => n.time === nearestNote.time && n.hand === nearestNote.hand) === index;
+                    // 一番近いノーツを特定（時間とimageFileが一致する最初のノーツ）
+                    const isNearest = isSameNote(note, nearestNote) &&
+                                     score.notes.findIndex(n => isSameNote(n, nearestNote)) === index;
                     
                     if (isNearest) {
                       return {
                         ...note,
-                        hand: newHand,
                         imageFile: newImageFile,
                       };
                     }
@@ -594,7 +583,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
             >
               <div style={{ fontWeight: "bold", marginBottom: "8px" }}>一番近いノーツ:</div>
               <div>時間: {nearestNote.time.toFixed(3)}秒</div>
-              <div>種類: {nearestNote.hand}</div>
+              <div>種類: {getHandFromImageFile(nearestNote.imageFile)}</div>
               {nearestNote.imageFile && <div>画像: {nearestNote.imageFile}</div>}
               <div style={{ marginTop: "4px", fontSize: "12px", opacity: 0.8 }}>
                 距離: {Math.abs(nearestNote.time - currentTime).toFixed(3)}秒
