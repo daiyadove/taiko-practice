@@ -1,5 +1,5 @@
 import { AbsoluteFill, useCurrentFrame, useVideoConfig, OffthreadVideo, staticFile } from "remotion";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Note } from "./components/Note";
 import { JudgeLine } from "./components/JudgeLine";
 import type { Score, Note as NoteType, NoteImageFile } from "./types/score";
@@ -43,29 +43,18 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   // 譜面データを読み込み
   const [score, setScore] = useState<Score | null>(null);
   const [selectedImageFile, setSelectedImageFile] = useState<NoteImageFile>("red_left_1.png");
+  const scoreRef = useRef<Score | null>(null); // scoreの最新値を保持
+  const [judgeLineEffectFrame, setJudgeLineEffectFrame] = useState<number | null>(null); // エフェクト開始フレーム
+  const previousVisibleNotesRef = useRef<Set<string>>(new Set()); // 前フレームの表示ノーツを記録
+  const [showSelectedNoteAnimation, setShowSelectedNoteAnimation] = useState<boolean>(true); // 選択ノーツ表示の有効/無効
+  
+  // scoreが変更されたときにrefを更新
+  useEffect(() => {
+    scoreRef.current = score;
+  }, [score]);
   
   // 現在の時刻（秒）
   const currentTime = frame / fps;
-  
-  // 通過判定を1フレーム遅らせる（1フレーム分の時間を加算）
-  const adjustedCurrentTime = currentTime - (1 / fps);
-  
-  // 一番近いノーツを常に取得（未来のノーツのみ、消えていないノーツ）
-  const nearestNote = score ? (() => {
-    if (score.notes.length === 0) return null;
-    
-    // 調整後の現在時刻より後のノーツ（未来のノーツ、消えていないノーツ）のみをフィルタリング
-    const futureNotes = score.notes.filter(note => note.time > adjustedCurrentTime);
-    
-    if (futureNotes.length === 0) return null;
-    
-    // 未来のノーツの中で一番近い（時間が最小の）ノーツを選択
-    const nearest = futureNotes.reduce((prev, curr) => {
-      return curr.time < prev.time ? curr : prev;
-    });
-    
-    return nearest;
-  })() : null;
   
   useEffect(() => {
     // propsで直接譜面データが指定されている場合はそれを使用
@@ -96,6 +85,23 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       });
   }, [scoreFile, scoreFromProps]);
   
+  // 一番近いノーツを常に取得（未来のノーツのみ、消えていないノーツ）
+  const nearestNote = score ? (() => {
+    if (score.notes.length === 0) return null;
+    
+    // 現在時刻より後のノーツ（未来のノーツ、消えていないノーツ）のみをフィルタリング
+    const futureNotes = score.notes.filter(note => note.time > currentTime);
+    
+    if (futureNotes.length === 0) return null;
+    
+    // 未来のノーツの中で一番近い（時間が最小の）ノーツを選択
+    const nearest = futureNotes.reduce((prev, curr) => {
+      return curr.time < prev.time ? curr : prev;
+    });
+    
+    return nearest;
+  })() : null;
+  
   // 一番近いノーツが変更されたときに、ノーツ種類を自動的に更新
   useEffect(() => {
     if (nearestNote && nearestNote.imageFile) {
@@ -113,19 +119,31 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   const addNote = () => {
     if (!score) return;
     
-    // 画像ファイル名に基づいてhandを決定
-    // red_left → left, blue_right → right, big → right（デフォルト）
-    const hand: "left" | "right" = selectedImageFile.includes("red_left")
-      ? "left"
-      : selectedImageFile.includes("blue_right") || selectedImageFile === "big.png"
-      ? "right"
-      : "right"; // デフォルト
+    // ノーツ追加時は常にred_left_1.pngを使用
+    const noteImageFile: NoteImageFile = "red_left_1.png";
+    const hand: "left" | "right" = "left";
+    
+    // 1フレーム後の時刻でノーツを追加
+    const futureTime = currentTime + (1 / fps);
+    const futureFrame = frame + 1;
+    
+    // 同じ時間（1フレーム以内）に既にノーツが存在するかチェック
+    const frameTimeThreshold = 1 / fps; // 1フレーム分の時間
+    const hasDuplicateNote = score.notes.some(note => {
+      const timeDiff = Math.abs(note.time - futureTime);
+      return timeDiff < frameTimeThreshold;
+    });
+    
+    // 同じ時間にノーツが既に存在する場合は追加しない
+    if (hasDuplicateNote) {
+      return;
+    }
     
     const newNote: NoteType = {
-      time: currentTime,
+      time: futureTime,
       hand: hand,
-      frame: frame,
-      imageFile: selectedImageFile,
+      frame: futureFrame,
+      imageFile: noteImageFile,
     };
     
     const updatedNotes = [...score.notes, newNote].sort((a, b) => a.time - b.time);
@@ -189,6 +207,57 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     URL.revokeObjectURL(url);
   };
   
+  // 表示すべきノーツをフィルタリング（scoreがnullの場合は空配列）
+  // 現在時刻の前後±notePreviewSeconds秒以内のノーツを表示
+  // ノーツが判定枠の中央にきたタイミング（note.time <= currentTime）で非表示にする
+  const notePreviewSeconds = 3; // ノーツを何秒前に表示するか
+  const visibleNotes = score ? score.notes.filter((note) => {
+    // ノーツが判定枠の中央にきたタイミングで非表示（削除はしない）
+    if (note.time <= currentTime) {
+      return false;
+    }
+    // 未来のノーツで、表示範囲内のもののみ表示
+    const timeDiff = note.time - currentTime;
+    return timeDiff >= -0.5 && timeDiff <= notePreviewSeconds;
+  }) : [];
+  
+  // ノーツが非表示になったタイミングを検出して判定枠にエフェクトを追加
+  useEffect(() => {
+    if (!score) return;
+    
+    // 古いエフェクト開始フレームをリセット（10フレーム以上経過した場合、または巻き戻しで現在フレームより前の場合）
+    if (judgeLineEffectFrame !== null) {
+      const elapsedFrames = frame - judgeLineEffectFrame;
+      if (elapsedFrames >= 10 || frame < judgeLineEffectFrame) {
+        setJudgeLineEffectFrame(null);
+      }
+    }
+    
+    // 現在のフレームの表示ノーツのキーを生成
+    const currentVisibleKeys = new Set(
+      visibleNotes.map(note => `${note.time}-${note.hand}-${note.imageFile || 'default'}`)
+    );
+    
+    // 前フレームで表示されていたが、現在は非表示になったノーツを検出
+    const disappearedNotes = Array.from(previousVisibleNotesRef.current).filter(
+      key => !currentVisibleKeys.has(key)
+    );
+    
+    // ノーツが非表示になった場合、エフェクトを開始（現在のフレームを記録）
+    if (disappearedNotes.length > 0) {
+      setJudgeLineEffectFrame(frame);
+    }
+    
+    // 現在の表示ノーツを記録
+    previousVisibleNotesRef.current = currentVisibleKeys;
+  }, [frame, visibleNotes, score, judgeLineEffectFrame]);
+  
+  // エフェクトの表示状態を計算（10フレーム間表示）
+  // 巻き戻し時の対応：現在フレームが開始フレームより前の場合や、10フレーム以上経過した場合は無効化
+  const judgeLineEffect = judgeLineEffectFrame !== null && 
+    frame >= judgeLineEffectFrame && 
+    (frame - judgeLineEffectFrame) < 10;
+  
   // 譜面データが読み込まれるまで待つ
   if (!score) {
     return (
@@ -209,21 +278,15 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   
   // ノーツUIエリアの設定
   const notesAreaHeight = 200;
-  const judgeLineX = width * 0.2; // 判定ラインの位置（画面左から20%）
-  const notePreviewSeconds = 3; // ノーツを何秒前に表示するか
-  
-  // 表示すべきノーツをフィルタリング
-  // 現在時刻の前後±notePreviewSeconds秒以内のノーツを表示
-  const visibleNotes = score.notes.filter((note) => {
-    const timeDiff = note.time - currentTime;
-    return timeDiff >= -0.5 && timeDiff <= notePreviewSeconds;
-  });
+  const judgeBoxSize = 110; // 判定枠のサイズ
+  const judgeLineX = width * 0.25; // 判定ラインの位置（画面左から25%、左に寄せる）
   
   // ノーツのx座標を計算する関数
   const calculateNoteX = (noteTime: number): number => {
     const timeUntilHit = noteTime - currentTime; // 判定ラインに到達するまでの時間
-    const startX = width * 0.9; // ノーツの開始位置（画面右から10%）
-    const endX = judgeLineX; // 判定ラインの位置
+    const noteOffsetX = -45; // ノーツを右に移動させるオフセット（px）
+    const startX = width * 0.9 + noteOffsetX; // ノーツの開始位置（画面右から10%、さらに右にオフセット）
+    const endX = judgeLineX + noteOffsetX; // 判定ラインの位置（判定枠の中央）+ オフセット
     
     if (timeUntilHit <= 0) {
       // 既に判定ラインを通過した場合、判定ラインの位置に表示
@@ -276,8 +339,14 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
           overflow: "hidden",
         }}
       >
-        {/* 判定ライン */}
-        <JudgeLine x={judgeLineX} height={notesAreaHeight} />
+        {/* 判定ライン（判定枠） */}
+        <JudgeLine 
+          x={judgeLineX} 
+          height={notesAreaHeight} 
+          showEffect={judgeLineEffect || false}
+          effectStartFrame={judgeLineEffectFrame}
+          currentFrame={frame}
+        />
         
         {/* ノーツを表示 */}
         {visibleNotes.map((note, index) => {
@@ -296,6 +365,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
               imageFile={note.imageFile}
               onClick={() => handleNoteClick(note)}
               isSelected={isNearest || false}
+              showSelectedAnimation={showSelectedNoteAnimation}
             />
           );
         })}
@@ -460,6 +530,29 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
               }}
             >
               時間を現在位置に変更
+            </button>
+            
+            <button
+              onClick={() => setShowSelectedNoteAnimation(!showSelectedNoteAnimation)}
+              style={{
+                padding: "14px",
+                backgroundColor: showSelectedNoteAnimation ? "#10b981" : "#6b7280",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
+                fontSize: "16px",
+                fontWeight: "500",
+                transition: "background-color 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = showSelectedNoteAnimation ? "#059669" : "#4b5563";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = showSelectedNoteAnimation ? "#10b981" : "#6b7280";
+              }}
+            >
+              {showSelectedNoteAnimation ? "選択ノーツ表示を無効化" : "選択ノーツ表示を有効化"}
             </button>
             
             <button

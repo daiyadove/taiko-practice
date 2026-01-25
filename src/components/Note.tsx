@@ -8,13 +8,14 @@ interface NoteProps {
   imageFile?: NoteImageFile;
   onClick?: () => void;
   isSelected?: boolean;
+  showSelectedAnimation?: boolean; // 選択ノーツ表示の有効/無効
 }
 
 /**
  * ノーツ（流れてくる音符）
  * 画像ファイルが指定されている場合はそれを使用、なければhandに基づいて決定
  */
-export const Note: React.FC<NoteProps> = ({ x, hand, imageFile, onClick, isSelected = false }) => {
+export const Note: React.FC<NoteProps> = ({ x, hand, imageFile, onClick, isSelected = false, showSelectedAnimation = true }) => {
   const frame = useCurrentFrame();
   
   // 画像のパスを決定
@@ -49,10 +50,12 @@ export const Note: React.FC<NoteProps> = ({ x, hand, imageFile, onClick, isSelec
   const baseSize = getBaseSize();
   
   // 選択中のノーツのエフェクト（パルスアニメーション）
-  const pulseScale = isSelected ? 1 + Math.sin(frame * 0.2) * 0.15 : 1;
-  const pulseBrightness = isSelected ? 1.5 + Math.sin(frame * 0.2) * 0.3 : 1;
-  const ringScale = isSelected ? 1 + Math.sin(frame * 0.2) * 0.1 : 1;
-  const ringOpacity = isSelected ? 0.7 + Math.sin(frame * 0.2) * 0.3 : 0;
+  // showSelectedAnimationがfalseの場合はエフェクトを無効化
+  const shouldShowAnimation = isSelected && showSelectedAnimation;
+  const pulseScale = shouldShowAnimation ? 1 + Math.sin(frame * 0.2) * 0.15 : 1;
+  const pulseBrightness = shouldShowAnimation ? 1.5 + Math.sin(frame * 0.2) * 0.3 : 1;
+  const ringScale = shouldShowAnimation ? 1 + Math.sin(frame * 0.2) * 0.1 : 1;
+  const ringOpacity = shouldShowAnimation ? 0.7 + Math.sin(frame * 0.2) * 0.3 : 0;
   const ringSize = baseSize + 20; // リングのサイズは基本サイズより20px大きい
 
   return (
@@ -67,8 +70,8 @@ export const Note: React.FC<NoteProps> = ({ x, hand, imageFile, onClick, isSelec
         height: baseSize,
         cursor: onClick ? "pointer" : "default",
         zIndex: isSelected ? 20 : onClick ? 10 : 1,
-        // 選択中のノーツにエフェクトを追加
-        filter: isSelected 
+        // 選択中のノーツにエフェクトを追加（showSelectedAnimationがtrueの場合のみ）
+        filter: shouldShowAnimation 
           ? `brightness(${pulseBrightness}) drop-shadow(0 0 ${15 + Math.sin(frame * 0.2) * 5}px rgba(255, 255, 255, 0.9))`
           : "none",
       }}
@@ -81,8 +84,8 @@ export const Note: React.FC<NoteProps> = ({ x, hand, imageFile, onClick, isSelec
           objectFit: "contain",
         }}
       />
-      {/* 選択中のノーツにリングを表示 */}
-      {isSelected && (
+      {/* 選択中のノーツにリングを表示（showSelectedAnimationがtrueの場合のみ） */}
+      {shouldShowAnimation && (
         <div
           style={{
             position: "absolute",
