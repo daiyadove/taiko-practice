@@ -5,6 +5,13 @@ const noteSchema = z.object({
   time: z.number().describe("タイミング（秒）"),
   hand: z.enum(["left", "right"]).describe("左手/右手"),
   frame: z.number().optional().describe("フレーム番号"),
+  imageFile: z.enum([
+    "big.png",
+    "blue_right_1.png",
+    "blue_right_2.png",
+    "red_left_1.png",
+    "red_left_2.png",
+  ]).optional().describe("ノーツの画像ファイル名"),
 });
 
 // 譜面データのスキーマ定義

@@ -4,6 +4,16 @@
 export type NoteHand = "left" | "right";
 
 /**
+ * ノーツの画像ファイル名
+ */
+export type NoteImageFile = 
+  | "big.png"
+  | "blue_right_1.png"
+  | "blue_right_2.png"
+  | "red_left_1.png"
+  | "red_left_2.png";
+
+/**
  * 個々のノーツ（音符）データ
  */
 export interface Note {
@@ -13,6 +23,8 @@ export interface Note {
   hand: NoteHand;
   /** フレーム番号（オプション） */
   frame?: number;
+  /** 画像ファイル名（オプション、指定がない場合はhandに基づいて決定） */
+  imageFile?: NoteImageFile;
 }
 
 /**
