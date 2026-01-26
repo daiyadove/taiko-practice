@@ -9,13 +9,14 @@ interface NoteProps {
   onClick?: () => void;
   isSelected?: boolean;
   showSelectedAnimation?: boolean; // 選択ノーツ表示の有効/無効
+  frame?: number; // ノーツのフレーム数（表示用）
 }
 
 /**
  * ノーツ（流れてくる音符）
  * 画像ファイルが指定されている場合はそれを使用、なければhandに基づいて決定
  */
-export const Note: React.FC<NoteProps> = ({ x, hand, imageFile, onClick, isSelected = false, showSelectedAnimation = true }) => {
+export const Note: React.FC<NoteProps> = ({ x, hand, imageFile, onClick, isSelected = false, showSelectedAnimation = true, frame: noteFrame }) => {
   const frame = useCurrentFrame();
   
   // 画像のパスを決定
@@ -100,6 +101,25 @@ export const Note: React.FC<NoteProps> = ({ x, hand, imageFile, onClick, isSelec
             opacity: ringOpacity,
           }}
         />
+      )}
+      {/* フレーム数を表示（showSelectedAnimationがtrueの場合、全てのノーツに表示） */}
+      {showSelectedAnimation && noteFrame !== undefined && (
+        <div
+          style={{
+            position: "absolute",
+            top: `calc(50% + ${45 / pulseScale}px)`, // リングより上に表示（パルス効果の影響を考慮して位置を調整）
+            left: "50%",
+            transform: `translateX(-50%) scale(${1 / pulseScale})`, // パルス効果を打ち消す
+            color: "white",
+            fontSize: "28px",
+            fontWeight: "bold",
+            textShadow: "0 0 4px rgba(0, 0, 0, 0.8), 0 0 8px rgba(0, 0, 0, 0.6)",
+            pointerEvents: "none",
+            zIndex: 30,
+          }}
+        >
+          {noteFrame}
+        </div>
       )}
     </div>
   );

@@ -515,6 +515,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
               onClick={() => handleNoteClick(note)}
               isSelected={isNearest || false}
               showSelectedAnimation={showSelectedNoteAnimation}
+              frame={note.frame}
             />
           );
         })}
