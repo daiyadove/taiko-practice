@@ -1,5 +1,5 @@
-import { AbsoluteFill, useCurrentFrame, useVideoConfig, OffthreadVideo, staticFile } from "remotion";
-import { useState, useEffect, useRef } from "react";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig, OffthreadVideo, staticFile, Img } from "remotion";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Note } from "./components/Note";
 import { JudgeLine } from "./components/JudgeLine";
 import type { Score, Note as NoteType, NoteImageFile } from "./types/score";
@@ -48,6 +48,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   const [judgeLineEffectFrame, setJudgeLineEffectFrame] = useState<number | null>(null); // エフェクト開始フレーム
   const previousVisibleNotesRef = useRef<Set<string>>(new Set()); // 前フレームの表示ノーツを記録
   const [showSelectedNoteAnimation, setShowSelectedNoteAnimation] = useState<boolean>(true); // 選択ノーツ表示の有効/無効
+  const [showPassedNotes, setShowPassedNotes] = useState<boolean>(false); // 通過ノーツ表示の有効/無効
   
   // scoreが変更されたときにrefを更新
   useEffect(() => {
@@ -86,18 +87,27 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       });
   }, [scoreFile, scoreFromProps]);
   
-  // 一番近いノーツを常に取得（未来のノーツのみ、消えていないノーツ）
+  // 一番近いノーツを常に取得
+  // showPassedNotesがtrueの場合は判定枠を過ぎたノーツも含める
   const nearestNote = score ? (() => {
     if (score.notes.length === 0) return null;
     
-    // 現在時刻より後のノーツ（未来のノーツ、消えていないノーツ）のみをフィルタリング
-    const futureNotes = score.notes.filter(note => note.time > currentTime);
+    let candidateNotes: NoteType[];
+    if (showPassedNotes) {
+      // 通過ノーツ表示ONの場合：すべてのノーツから選択
+      candidateNotes = score.notes;
+    } else {
+      // 通過ノーツ表示OFFの場合：未来のノーツのみ
+      candidateNotes = score.notes.filter(note => note.time > currentTime);
+    }
     
-    if (futureNotes.length === 0) return null;
+    if (candidateNotes.length === 0) return null;
     
-    // 未来のノーツの中で一番近い（時間が最小の）ノーツを選択
-    const nearest = futureNotes.reduce((prev, curr) => {
-      return curr.time < prev.time ? curr : prev;
+    // 一番近い（時間の差が最小の）ノーツを選択
+    const nearest = candidateNotes.reduce((prev, curr) => {
+      const prevDiff = Math.abs(prev.time - currentTime);
+      const currDiff = Math.abs(curr.time - currentTime);
+      return currDiff < prevDiff ? curr : prev;
     });
     
     return nearest;
@@ -114,11 +124,11 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   }, [nearestNote?.time, nearestNote?.imageFile]);
   
   // ノーツを追加
-  const addNote = () => {
+  const addNote = useCallback((noteImageFile?: NoteImageFile) => {
     if (!score) return;
     
-    // ノーツ追加時は常にred_left_1.pngを使用
-    const noteImageFile: NoteImageFile = "red_left_1.png";
+    // ノーツ種類が指定されていない場合は、選択中のノーツ種類を使用
+    const imageFile: NoteImageFile = noteImageFile || selectedImageFile;
     
     // 現在時刻でノーツを追加
     const noteTime = currentTime;
@@ -139,17 +149,49 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     const newNote: NoteType = {
       time: noteTime,
       frame: noteFrame,
-      imageFile: noteImageFile,
+      imageFile: imageFile,
     };
     
     const updatedNotes = [...score.notes, newNote].sort((a, b) => a.time - b.time);
     setScore({ ...score, notes: updatedNotes });
+  }, [score, currentTime, frame, fps, selectedImageFile]);
+  
+  // キーボード入力でノーツを追加
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // テキスト入力フィールドにフォーカスがある場合は無視
+      const target = event.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+      
+      // キーに応じたノーツ種類のマッピング
+      const keyToNoteMap: Record<string, NoteImageFile> = {
+        'z': 'red_left_2.png',
+        'Z': 'red_left_2.png',
+        'x': 'red_left_1.png',
+        'X': 'red_left_1.png',
+        'c': 'big.png',
+        'C': 'big.png',
+        'v': 'blue_right_1.png',
+        'V': 'blue_right_1.png',
+        'b': 'blue_right_2.png',
+        'B': 'blue_right_2.png',
+      };
+      
+      const noteImageFile = keyToNoteMap[event.key];
+      if (noteImageFile) {
+        event.preventDefault(); // デフォルト動作を防ぐ
+        addNote(noteImageFile);
+      }
+    };
     
-    // 再生フレームを1フレーム前にシーク
-    if (frame > 0) {
-      seekToFrame(frame - 1);
-    }
-  };
+    window.addEventListener('keydown', handleKeyDown);
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [addNote]);
   
   // ノーツを削除
   const deleteNote = () => {
@@ -167,9 +209,13 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     setScore({ ...score, notes: updatedNotes });
   };
   
-  // ノーツの時間を現在時刻に変更
-  const updateNoteTime = () => {
+  // 選択されたノーツをXフレーム移動する関数
+  const moveSelectedNote = useCallback((frameOffset: number) => {
     if (!score || !nearestNote) return;
+    
+    // 移動後の時間を計算
+    const newTime = nearestNote.time + (frameOffset / fps);
+    const newFrame = (nearestNote.frame !== undefined ? nearestNote.frame : Math.floor(nearestNote.time * fps)) + frameOffset;
     
     // 最も近いノーツの時間を更新（時間とimageFileが一致する最初のノーツ）
     const updatedNotes = score.notes.map((note, index) => {
@@ -178,19 +224,14 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       if (isNearest && score.notes.findIndex(n => isSameNote(n, nearestNote)) === index) {
         return {
           ...note,
-          time: currentTime,
-          frame: frame,
+          time: Math.max(0, newTime), // 時間が負の値にならないように
+          frame: Math.max(0, newFrame), // フレームが負の値にならないように
         };
       }
       return note;
     }).sort((a, b) => a.time - b.time);
     setScore({ ...score, notes: updatedNotes });
-    
-    // 再生フレームを1フレーム前にシーク
-    if (frame > 0) {
-      seekToFrame(frame - 1);
-    }
-  };
+  }, [score, nearestNote, fps]);
   
   // ノーツをクリックしたときの処理
   const handleNoteClick = (note: NoteType) => {
@@ -213,21 +254,45 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     URL.revokeObjectURL(url);
   };
   
+  // ノーツUIエリアの設定（visibleNotesの計算で使用するため、ここで定義）
+  const judgeLineX = width * 0.25; // 判定ラインの位置（画面左から25%、左に寄せる）
+  const noteOffsetX = -45; // ノーツを右に移動させるオフセット（px）
+  const startX = width * 0.9 + noteOffsetX; // ノーツの開始位置
+  const endX = judgeLineX + noteOffsetX; // 判定ラインの位置
+  const leftEdgeX = 0; // 左端の位置
+  
   // 表示すべきノーツをフィルタリング（scoreがnullの場合は空配列）
   // 現在時刻の前後±notePreviewSeconds秒以内のノーツを表示
-  // ノーツが判定枠の中央にきたタイミング（note.time <= currentTime）で非表示にする
+  // showPassedNotesがfalseの場合、ノーツが判定枠の中央にきたタイミング（note.time <= currentTime）で非表示にする
   const notePreviewSeconds = 3; // ノーツを何秒前に表示するか
+  const normalSpeed = (startX - endX) / notePreviewSeconds; // 通常のノーツの速度（px/秒）
+  const timeToReachLeftEdge = (endX - leftEdgeX) / normalSpeed; // 判定ラインから左端に到達するまでの時間
+  
   const visibleNotes = score ? score.notes.filter((note) => {
-    // ノーツが判定枠の中央にきたタイミングで非表示（削除はしない）
-    if (note.time <= currentTime) {
+    // showPassedNotesがfalseの場合、判定枠の中央にきたノーツを非表示
+    if (!showPassedNotes && note.time <= currentTime) {
       return false;
     }
-    // 未来のノーツで、表示範囲内のもののみ表示
+    
+    // showPassedNotesがtrueの場合、通過したノーツが左端に到達したら非表示
+    if (showPassedNotes && note.time <= currentTime) {
+      const timePassed = currentTime - note.time; // 通過してからの時間
+      if (timePassed >= timeToReachLeftEdge) {
+        return false; // 左端に到達したので非表示
+      }
+    }
+    
+    // 表示範囲内のノーツのみ表示
     const timeDiff = note.time - currentTime;
+    // showPassedNotesがtrueの場合は過去のノーツも表示範囲内なら表示
+    if (showPassedNotes) {
+      return Math.abs(timeDiff) <= notePreviewSeconds;
+    }
+    // showPassedNotesがfalseの場合は未来のノーツのみ
     return timeDiff >= -0.5 && timeDiff <= notePreviewSeconds;
   }) : [];
   
-  // ノーツが非表示になったタイミングを検出して判定枠にエフェクトを追加
+  // ノーツが判定枠に触れたタイミングを検出して判定枠にエフェクトを追加
   useEffect(() => {
     if (!score) return;
     
@@ -239,24 +304,32 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       }
     }
     
-    // 現在のフレームの表示ノーツのキーを生成
-    const currentVisibleKeys = new Set(
-      visibleNotes.map(note => `${note.time}-${note.imageFile || 'default'}`)
+    // ノーツが判定枠に触れたタイミングを検出（currentTimeに非常に近いノーツ）
+    const frameTimeThreshold = 1 / fps; // 1フレーム分の時間
+    const touchedNotes = score.notes.filter(note => {
+      const timeDiff = Math.abs(note.time - currentTime);
+      return timeDiff < frameTimeThreshold; // 1フレーム以内のノーツ
+    });
+    
+    // 前フレームで判定枠に触れていなかったノーツが、現在触れている場合、エフェクトを開始
+    const previousTouchedKeys = previousVisibleNotesRef.current;
+    const currentTouchedKeys = new Set(
+      touchedNotes.map(note => `${note.time}-${note.imageFile || 'default'}`)
     );
     
-    // 前フレームで表示されていたが、現在は非表示になったノーツを検出
-    const disappearedNotes = Array.from(previousVisibleNotesRef.current).filter(
-      key => !currentVisibleKeys.has(key)
+    // 新しく触れたノーツを検出
+    const newlyTouchedNotes = Array.from(currentTouchedKeys).filter(
+      key => !previousTouchedKeys.has(key)
     );
     
-    // ノーツが非表示になった場合、エフェクトを開始（現在のフレームを記録）
-    if (disappearedNotes.length > 0) {
+    // ノーツが判定枠に触れた場合、エフェクトを開始（現在のフレームを記録）
+    if (newlyTouchedNotes.length > 0) {
       setJudgeLineEffectFrame(frame);
     }
     
-    // 現在の表示ノーツを記録
-    previousVisibleNotesRef.current = currentVisibleKeys;
-  }, [frame, visibleNotes, score, judgeLineEffectFrame]);
+    // 現在の判定枠に触れたノーツを記録
+    previousVisibleNotesRef.current = currentTouchedKeys;
+  }, [frame, currentTime, score, fps, judgeLineEffectFrame]);
   
   // エフェクトの表示状態を計算（10フレーム間表示）
   // 巻き戻し時の対応：現在フレームが開始フレームより前の場合や、10フレーム以上経過した場合は無効化
@@ -284,7 +357,6 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   
   // ノーツUIエリアの設定
   const notesAreaHeight = 200;
-  const judgeLineX = width * 0.25; // 判定ラインの位置（画面左から25%、左に寄せる）
   
   // ノーツが同じかどうかを判定するヘルパー関数
   const isSameNote = (note1: NoteType, note2: NoteType): boolean => {
@@ -298,10 +370,22 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     const noteOffsetX = -45; // ノーツを右に移動させるオフセット（px）
     const startX = width * 0.9 + noteOffsetX; // ノーツの開始位置（画面右から10%、さらに右にオフセット）
     const endX = judgeLineX + noteOffsetX; // 判定ラインの位置（判定枠の中央）+ オフセット
+    const leftEdgeX = 0; // 左端の位置
     
     if (timeUntilHit <= 0) {
-      // 既に判定ラインを通過した場合、判定ラインの位置に表示
-      return endX;
+      // 既に判定ラインを通過した場合
+      if (showPassedNotes) {
+        // 通過ノーツ表示ONの場合：左端まで流す（通常のノーツと同じ速度で）
+        // 通常のノーツの速度: (startX - endX) / notePreviewSeconds
+        const timePassed = Math.abs(timeUntilHit); // 通過してからの時間（正の値）
+        const normalSpeed = (startX - endX) / notePreviewSeconds; // 通常のノーツの速度（px/秒）
+        const distanceMoved = timePassed * normalSpeed; // 通過してから移動した距離
+        const newX = endX - distanceMoved; // 新しい位置（左方向に移動）
+        return Math.max(leftEdgeX, newX); // 左端を超えないように
+      } else {
+        // 通過ノーツ表示OFFの場合：判定ラインの位置に表示
+        return endX;
+      }
     }
     
     // ノーツが右から左へ流れるアニメーション
@@ -318,6 +402,63 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
         flexDirection: "column",
       }}
     >
+      {/* キー操作ガイド（左上） */}
+      <div
+        style={{
+          position: "absolute",
+          top: 20,
+          left: 20,
+          backgroundColor: "rgba(0, 0, 0, 0.8)",
+          padding: "24px",
+          borderRadius: "12px",
+          color: "white",
+          fontSize: "18px",
+          zIndex: 999,
+          boxShadow: "0 2px 10px rgba(0, 0, 0, 0.5)",
+        }}
+      >
+        <div style={{ fontWeight: "bold", marginBottom: "16px", fontSize: "22px" }}>
+          キー操作
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ minWidth: "30px", fontWeight: "bold", fontSize: "20px" }}>Z :</span>
+            <Img 
+              src={staticFile("images/notes/red_left_2.png")} 
+              style={{ width: "60px", height: "60px", objectFit: "contain" }}
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ minWidth: "30px", fontWeight: "bold", fontSize: "20px" }}>X :</span>
+            <Img 
+              src={staticFile("images/notes/red_left_1.png")} 
+              style={{ width: "60px", height: "60px", objectFit: "contain" }}
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ minWidth: "30px", fontWeight: "bold", fontSize: "20px" }}>C :</span>
+            <Img 
+              src={staticFile("images/notes/big.png")} 
+              style={{ width: "60px", height: "60px", objectFit: "contain" }}
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ minWidth: "30px", fontWeight: "bold", fontSize: "20px" }}>V :</span>
+            <Img 
+              src={staticFile("images/notes/blue_right_1.png")} 
+              style={{ width: "60px", height: "60px", objectFit: "contain" }}
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ minWidth: "30px", fontWeight: "bold", fontSize: "20px" }}>B :</span>
+            <Img 
+              src={staticFile("images/notes/blue_right_2.png")} 
+              style={{ width: "60px", height: "60px", objectFit: "contain" }}
+            />
+          </div>
+        </div>
+      </div>
+      
       {/* 上部：元動画エリア */}
       <div
         style={{
@@ -405,58 +546,13 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
             現在位置: {currentTime.toFixed(3)}秒 (フレーム: {frame})
           </div>
           
-          {/* ノーツ画像選択 */}
-          <div style={{ marginBottom: "20px" }}>
-            <div style={{ marginBottom: "8px", fontSize: "16px", fontWeight: "500" }}>ノーツ種類:</div>
-            <select
-              value={selectedImageFile}
-              onChange={(e) => {
-                const newImageFile = e.target.value as NoteImageFile;
-                setSelectedImageFile(newImageFile);
-                
-                // 一番近いノーツが存在する場合は、そのノーツの種類も変更
-                if (score && nearestNote) {
-                  const updatedNotes = score.notes.map((note, index) => {
-                    // 一番近いノーツを特定（時間とimageFileが一致する最初のノーツ）
-                    const isNearest = isSameNote(note, nearestNote) &&
-                                     score.notes.findIndex(n => isSameNote(n, nearestNote)) === index;
-                    
-                    if (isNearest) {
-                      return {
-                        ...note,
-                        imageFile: newImageFile,
-                      };
-                    }
-                    return note;
-                  });
-                  setScore({ ...score, notes: updatedNotes });
-                }
-              }}
-              style={{
-                width: "100%",
-                padding: "10px",
-                fontSize: "16px",
-                backgroundColor: "#1a1a2e",
-                color: "white",
-                border: "2px solid #555",
-                borderRadius: "6px",
-              }}
-            >
-              {NOTE_IMAGE_FILES.map((file) => (
-                <option key={file} value={file}>
-                  {file}
-                </option>
-              ))}
-            </select>
-          </div>
-          
           {/* 操作ボタン */}
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <button
-              onClick={addNote}
+              onClick={() => setShowPassedNotes(!showPassedNotes)}
               style={{
                 padding: "14px",
-                backgroundColor: "#3b82f6",
+                backgroundColor: showPassedNotes ? "#10b981" : "#6b7280",
                 color: "white",
                 border: "none",
                 borderRadius: "6px",
@@ -466,13 +562,13 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
                 transition: "background-color 0.2s",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = "#2563eb";
+                e.currentTarget.style.backgroundColor = showPassedNotes ? "#059669" : "#4b5563";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "#3b82f6";
+                e.currentTarget.style.backgroundColor = showPassedNotes ? "#10b981" : "#6b7280";
               }}
             >
-              ノーツ追加
+              {showPassedNotes ? "通過ノーツ表示ON" : "通過ノーツ表示OFF"}
             </button>
             
             <button
@@ -503,33 +599,177 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
               ノーツ削除
             </button>
             
-            <button
-              onClick={updateNoteTime}
-              disabled={!nearestNote}
-              style={{
-                padding: "14px",
-                backgroundColor: nearestNote ? "#f59e0b" : "#666",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: nearestNote ? "pointer" : "not-allowed",
-                fontSize: "16px",
-                fontWeight: "500",
-                transition: "background-color 0.2s",
-              }}
-              onMouseEnter={(e) => {
-                if (nearestNote) {
-                  e.currentTarget.style.backgroundColor = "#d97706";
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (nearestNote) {
-                  e.currentTarget.style.backgroundColor = "#f59e0b";
-                }
-              }}
-            >
-              時間を現在位置に変更
-            </button>
+            {/* フレーム移動ボタン（横並び） */}
+            <div style={{ display: "flex", flexDirection: "row", gap: "8px" }}>
+              <button
+                onClick={() => moveSelectedNote(-3)}
+                disabled={!nearestNote}
+                style={{
+                  padding: "14px",
+                  backgroundColor: nearestNote ? "#f59e0b" : "#666",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: nearestNote ? "pointer" : "not-allowed",
+                  fontSize: "16px",
+                  fontWeight: "500",
+                  flex: 1,
+                  transition: "background-color 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#d97706";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#f59e0b";
+                  }
+                }}
+              >
+                &lt;3
+              </button>
+              <button
+                onClick={() => moveSelectedNote(-2)}
+                disabled={!nearestNote}
+                style={{
+                  padding: "14px",
+                  backgroundColor: nearestNote ? "#f59e0b" : "#666",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: nearestNote ? "pointer" : "not-allowed",
+                  fontSize: "16px",
+                  fontWeight: "500",
+                  flex: 1,
+                  transition: "background-color 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#d97706";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#f59e0b";
+                  }
+                }}
+              >
+                &lt;2
+              </button>
+              <button
+                onClick={() => moveSelectedNote(-1)}
+                disabled={!nearestNote}
+                style={{
+                  padding: "14px",
+                  backgroundColor: nearestNote ? "#f59e0b" : "#666",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: nearestNote ? "pointer" : "not-allowed",
+                  fontSize: "16px",
+                  fontWeight: "500",
+                  flex: 1,
+                  transition: "background-color 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#d97706";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#f59e0b";
+                  }
+                }}
+              >
+                &lt;1
+              </button>
+              <button
+                onClick={() => moveSelectedNote(1)}
+                disabled={!nearestNote}
+                style={{
+                  padding: "14px",
+                  backgroundColor: nearestNote ? "#f59e0b" : "#666",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: nearestNote ? "pointer" : "not-allowed",
+                  fontSize: "16px",
+                  fontWeight: "500",
+                  flex: 1,
+                  transition: "background-color 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#d97706";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#f59e0b";
+                  }
+                }}
+              >
+                1&gt;
+              </button>
+              <button
+                onClick={() => moveSelectedNote(2)}
+                disabled={!nearestNote}
+                style={{
+                  padding: "14px",
+                  backgroundColor: nearestNote ? "#f59e0b" : "#666",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: nearestNote ? "pointer" : "not-allowed",
+                  fontSize: "16px",
+                  fontWeight: "500",
+                  flex: 1,
+                  transition: "background-color 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#d97706";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#f59e0b";
+                  }
+                }}
+              >
+                2&gt;
+              </button>
+              <button
+                onClick={() => moveSelectedNote(3)}
+                disabled={!nearestNote}
+                style={{
+                  padding: "14px",
+                  backgroundColor: nearestNote ? "#f59e0b" : "#666",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: nearestNote ? "pointer" : "not-allowed",
+                  fontSize: "16px",
+                  fontWeight: "500",
+                  flex: 1,
+                  transition: "background-color 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#d97706";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (nearestNote) {
+                    e.currentTarget.style.backgroundColor = "#f59e0b";
+                  }
+                }}
+              >
+                3&gt;
+              </button>
+            </div>
             
             <button
               onClick={() => setShowSelectedNoteAnimation(!showSelectedNoteAnimation)}
