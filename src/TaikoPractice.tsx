@@ -120,14 +120,14 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     // ノーツ追加時は常にred_left_1.pngを使用
     const noteImageFile: NoteImageFile = "red_left_1.png";
     
-    // 1フレーム後の時刻でノーツを追加
-    const futureTime = currentTime + (1 / fps);
-    const futureFrame = frame + 1;
+    // 現在時刻でノーツを追加
+    const noteTime = currentTime;
+    const noteFrame = frame;
     
     // 同じ時間（1フレーム以内）に既にノーツが存在するかチェック
     const frameTimeThreshold = 1 / fps; // 1フレーム分の時間
     const hasDuplicateNote = score.notes.some(note => {
-      const timeDiff = Math.abs(note.time - futureTime);
+      const timeDiff = Math.abs(note.time - noteTime);
       return timeDiff < frameTimeThreshold;
     });
     
@@ -137,13 +137,18 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     }
     
     const newNote: NoteType = {
-      time: futureTime,
-      frame: futureFrame,
+      time: noteTime,
+      frame: noteFrame,
       imageFile: noteImageFile,
     };
     
     const updatedNotes = [...score.notes, newNote].sort((a, b) => a.time - b.time);
     setScore({ ...score, notes: updatedNotes });
+    
+    // 再生フレームを1フレーム前にシーク
+    if (frame > 0) {
+      seekToFrame(frame - 1);
+    }
   };
   
   // ノーツを削除
@@ -180,6 +185,11 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       return note;
     }).sort((a, b) => a.time - b.time);
     setScore({ ...score, notes: updatedNotes });
+    
+    // 再生フレームを1フレーム前にシーク
+    if (frame > 0) {
+      seekToFrame(frame - 1);
+    }
   };
   
   // ノーツをクリックしたときの処理
