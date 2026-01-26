@@ -570,29 +570,6 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
           {/* 操作ボタン */}
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <button
-              onClick={() => setShowPassedNotes(!showPassedNotes)}
-              style={{
-                padding: "14px",
-                backgroundColor: showPassedNotes ? "#10b981" : "#6b7280",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: "pointer",
-                fontSize: "16px",
-                fontWeight: "500",
-                transition: "background-color 0.2s",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = showPassedNotes ? "#059669" : "#4b5563";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = showPassedNotes ? "#10b981" : "#6b7280";
-              }}
-            >
-              {showPassedNotes ? "通過ノーツ表示ON" : "通過ノーツ表示OFF"}
-            </button>
-            
-            <button
               onClick={deleteNote}
               disabled={!nearestNote}
               style={{
@@ -618,6 +595,52 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
               }}
             >
               ノーツ削除
+            </button>
+            
+            <button
+              onClick={() => setShowPassedNotes(!showPassedNotes)}
+              style={{
+                padding: "14px",
+                backgroundColor: showPassedNotes ? "#10b981" : "#6b7280",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
+                fontSize: "16px",
+                fontWeight: "500",
+                transition: "background-color 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = showPassedNotes ? "#059669" : "#4b5563";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = showPassedNotes ? "#10b981" : "#6b7280";
+              }}
+            >
+              {showPassedNotes ? "通過ノーツ表示ON" : "通過ノーツ表示OFF"}
+            </button>
+            
+            <button
+              onClick={() => setShowSelectedNoteAnimation(!showSelectedNoteAnimation)}
+              style={{
+                padding: "14px",
+                backgroundColor: showSelectedNoteAnimation ? "#10b981" : "#6b7280",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
+                fontSize: "16px",
+                fontWeight: "500",
+                transition: "background-color 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = showSelectedNoteAnimation ? "#059669" : "#4b5563";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = showSelectedNoteAnimation ? "#10b981" : "#6b7280";
+              }}
+            >
+              {showSelectedNoteAnimation ? "選択ノーツ表示を無効化" : "選択ノーツ表示を有効化"}
             </button>
             
             {/* フレーム移動ボタン（横並び） */}
@@ -818,29 +841,6 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
               }}
             >
               現在の位置に選択したノーツを移動
-            </button>
-            
-            <button
-              onClick={() => setShowSelectedNoteAnimation(!showSelectedNoteAnimation)}
-              style={{
-                padding: "14px",
-                backgroundColor: showSelectedNoteAnimation ? "#10b981" : "#6b7280",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: "pointer",
-                fontSize: "16px",
-                fontWeight: "500",
-                transition: "background-color 0.2s",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = showSelectedNoteAnimation ? "#059669" : "#4b5563";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = showSelectedNoteAnimation ? "#10b981" : "#6b7280";
-              }}
-            >
-              {showSelectedNoteAnimation ? "選択ノーツ表示を無効化" : "選択ノーツ表示を有効化"}
             </button>
             
             <button
