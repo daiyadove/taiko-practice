@@ -48,7 +48,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   const [judgeLineEffectFrame, setJudgeLineEffectFrame] = useState<number | null>(null); // エフェクト開始フレーム
   const previousVisibleNotesRef = useRef<Set<string>>(new Set()); // 前フレームの表示ノーツを記録
   const [showSelectedNoteAnimation, setShowSelectedNoteAnimation] = useState<boolean>(true); // 選択ノーツ表示の有効/無効
-  const [showPassedNotes, setShowPassedNotes] = useState<boolean>(false); // 通過ノーツ表示の有効/無効
+  const [showPassedNotes, setShowPassedNotes] = useState<boolean>(true); // 通過ノーツ表示の有効/無効（デフォルトON）
   
   // scoreが変更されたときにrefを更新
   useEffect(() => {
@@ -232,6 +232,26 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     }).sort((a, b) => a.time - b.time);
     setScore({ ...score, notes: updatedNotes });
   }, [score, nearestNote, fps]);
+  
+  // 選択されたノーツを現在の位置に移動する関数
+  const moveSelectedNoteToCurrentTime = useCallback(() => {
+    if (!score || !nearestNote) return;
+    
+    // 最も近いノーツの時間を現在時刻に更新（時間とimageFileが一致する最初のノーツ）
+    const updatedNotes = score.notes.map((note, index) => {
+      const isNearest = isSameNote(note, nearestNote);
+      // 最初に一致したノーツのみを更新
+      if (isNearest && score.notes.findIndex(n => isSameNote(n, nearestNote)) === index) {
+        return {
+          ...note,
+          time: currentTime,
+          frame: frame,
+        };
+      }
+      return note;
+    }).sort((a, b) => a.time - b.time);
+    setScore({ ...score, notes: updatedNotes });
+  }, [score, nearestNote, currentTime, frame]);
   
   // ノーツをクリックしたときの処理
   const handleNoteClick = (note: NoteType) => {
@@ -771,6 +791,34 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
                 3&gt;
               </button>
             </div>
+            
+            <button
+              onClick={moveSelectedNoteToCurrentTime}
+              disabled={!nearestNote}
+              style={{
+                padding: "14px",
+                backgroundColor: nearestNote ? "#f59e0b" : "#666",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                cursor: nearestNote ? "pointer" : "not-allowed",
+                fontSize: "16px",
+                fontWeight: "500",
+                transition: "background-color 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                if (nearestNote) {
+                  e.currentTarget.style.backgroundColor = "#d97706";
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (nearestNote) {
+                  e.currentTarget.style.backgroundColor = "#f59e0b";
+                }
+              }}
+            >
+              現在の位置に選択したノーツを移動
+            </button>
             
             <button
               onClick={() => setShowSelectedNoteAnimation(!showSelectedNoteAnimation)}
