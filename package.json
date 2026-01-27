@@ -20,6 +20,7 @@
     "@remotion/player": "^4.0.407",
     "@remotion/renderer": "^4.0.407",
     "@remotion/zod-types": "4.0.407",
+    "@supabase/supabase-js": "^2.91.1",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/react": "^19.2.9",
     "@types/react-dom": "^19.2.3",

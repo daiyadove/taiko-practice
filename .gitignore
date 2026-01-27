@@ -12,3 +12,5 @@ public/videos/*
 !public/videos/.gitkeep
 *.mp4
 score.json
+.env
+.env.local

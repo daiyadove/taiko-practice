@@ -5,6 +5,7 @@ import { JudgeLine } from "./components/JudgeLine";
 import type { Score, Note as NoteType, NoteImageFile } from "./types/score";
 import { getHandFromImageFile } from "./types/score";
 import type { TaikoPracticeProps } from "./schema";
+import { supabase } from "./lib/supabase";
 
 // Remotion Studioのseek関数を使用する関数
 const seekToFrame = (frame: number) => {
@@ -49,6 +50,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   const previousVisibleNotesRef = useRef<Set<string>>(new Set()); // 前フレームの表示ノーツを記録
   const [showSelectedNoteAnimation, setShowSelectedNoteAnimation] = useState<boolean>(true); // 選択ノーツ表示の有効/無効
   const [showPassedNotes, setShowPassedNotes] = useState<boolean>(true); // 通過ノーツ表示の有効/無効（デフォルトON）
+  const [isUploading, setIsUploading] = useState<boolean>(false); // Supabaseアップロード中の状態
   
   // scoreが変更されたときにrefを更新
   useEffect(() => {
@@ -272,6 +274,119 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     link.download = "score.json";
     link.click();
     URL.revokeObjectURL(url);
+  };
+  
+  // Supabaseに動画とJSONをアップロード
+  const uploadToSupabase = async (videoFile: File, videoName: string) => {
+    if (!score) {
+      alert("譜面データがありません");
+      return;
+    }
+    
+    setIsUploading(true);
+    
+    try {
+      // ① DBに先にレコードを作る（重要）
+      const { data: video, error: insertError } = await supabase
+        .from('videos')
+        .insert({
+          name: videoName,
+          video_path: 'temp',
+          json_path: 'temp',
+        })
+        .select()
+        .single();
+      
+      if (insertError) {
+        throw new Error(`DBレコード作成エラー: ${insertError.message}`);
+      }
+      
+      if (!video || !video.id) {
+        throw new Error('video.idが取得できませんでした');
+      }
+      
+      // ② Storageにアップロード
+      const videoPath = `videos/${video.id}.mp4`;
+      const jsonPath = `metadata/${video.id}.json`;
+      
+      // 動画ファイルをアップロード
+      const { error: videoUploadError } = await supabase.storage
+        .from('assets')
+        .upload(videoPath, videoFile, {
+          cacheControl: '3600',
+          upsert: false
+        });
+      
+      if (videoUploadError) {
+        throw new Error(`動画アップロードエラー: ${videoUploadError.message}`);
+      }
+      
+      // JSONファイルをアップロード
+      const jsonBlob = new Blob([JSON.stringify(score, null, 2)], {
+        type: 'application/json',
+      });
+      
+      const { error: jsonUploadError } = await supabase.storage
+        .from('assets')
+        .upload(jsonPath, jsonBlob, {
+          cacheControl: '3600',
+          upsert: false
+        });
+      
+      if (jsonUploadError) {
+        throw new Error(`JSONアップロードエラー: ${jsonUploadError.message}`);
+      }
+      
+      // ③ DBを更新
+      const { error: updateError } = await supabase
+        .from('videos')
+        .update({
+          video_path: videoPath,
+          json_path: jsonPath,
+        })
+        .eq('id', video.id);
+      
+      if (updateError) {
+        throw new Error(`DB更新エラー: ${updateError.message}`);
+      }
+      
+      alert(`アップロード成功！\n動画ID: ${video.id}\n動画パス: ${videoPath}\nJSONパス: ${jsonPath}`);
+    } catch (error) {
+      console.error('アップロードエラー:', error);
+      alert(`アップロードエラー: ${error instanceof Error ? error.message : '不明なエラー'}`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+  
+  // 現在読み込まれている動画と編集したJSONを自動でSupabaseにアップロード
+  const handleUploadToSupabase = async () => {
+    if (!score) {
+      alert("譜面データがありません");
+      return;
+    }
+    
+    try {
+      // 現在読み込まれている動画ファイルを取得
+      const videoResponse = await fetch(videoSrc);
+      if (!videoResponse.ok) {
+        throw new Error(`動画ファイルの取得に失敗しました: ${videoResponse.statusText}`);
+      }
+      
+      const videoBlob = await videoResponse.blob();
+      
+      // BlobをFileオブジェクトに変換
+      const videoFileName = score.videoPath || 'video.mp4';
+      const videoFile = new File([videoBlob], videoFileName, { type: videoBlob.type || 'video/mp4' });
+      
+      // 動画名をscore.videoPathから取得（拡張子を除く）
+      const videoName = videoFileName.replace(/\.[^/.]+$/, '') || '動画';
+      
+      await uploadToSupabase(videoFile, videoName);
+    } catch (error) {
+      console.error('動画ファイル取得エラー:', error);
+      alert(`動画ファイルの取得に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
+    }
   };
   
   // ノーツUIエリアの設定（visibleNotesの計算で使用するため、ここで定義）
@@ -844,27 +959,32 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
             </button>
             
             <button
-              onClick={downloadScore}
+              onClick={handleUploadToSupabase}
+              disabled={!score || isUploading}
               style={{
                 padding: "14px",
-                backgroundColor: "#8b5cf6",
+                backgroundColor: (!score || isUploading) ? "#666" : "#8b5cf6",
                 color: "white",
                 border: "none",
                 borderRadius: "6px",
-                cursor: "pointer",
+                cursor: (!score || isUploading) ? "not-allowed" : "pointer",
                 fontSize: "16px",
                 fontWeight: "500",
                 marginTop: "8px",
                 transition: "background-color 0.2s",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = "#7c3aed";
+                if (score && !isUploading) {
+                  e.currentTarget.style.backgroundColor = "#7c3aed";
+                }
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "#8b5cf6";
+                if (score && !isUploading) {
+                  e.currentTarget.style.backgroundColor = "#8b5cf6";
+                }
               }}
             >
-              譜面をダウンロード
+              {isUploading ? "アップロード中..." : "譜面をアップロード"}
             </button>
           </div>
           
