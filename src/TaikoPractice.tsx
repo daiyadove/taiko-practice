@@ -53,55 +53,23 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   const { fps, width } = useVideoConfig();
   
   // レンダリング時かどうかを判定（typeof window === "undefined"）
+  // 注意: このコンポーネントは編集専用です。レンダリング時はTaikoPracticeRenderを使用してください。
   const isRenderingMode = typeof window === "undefined";
   
-  // 1. レンダリング時に、localStorageからscoreを読み込んでpropsとして使用
-  // scoreFromPropsがない場合、localStorageから読み込む（レンダリング準備時に保存されたデータ）
-  const [localStorageScore, setLocalStorageScore] = useState<Score | null>(() => {
-    // 初期化時にlocalStorageから読み込む（レンダリング時のみ）
-    if (!scoreFromProps && typeof window !== "undefined") {
-      try {
-        const savedScore = localStorage.getItem('taiko-practice-render-score');
-        if (savedScore) {
-          const score: Score = JSON.parse(savedScore);
-          console.log('[TaikoPractice] localStorageからscoreを初期化時に読み込みました:', score);
-          return score;
-        }
-      } catch (error) {
-        console.error('[TaikoPractice] localStorageからの読み込みエラー:', error);
-      }
-    }
-    return null;
-  });
-  
-  useEffect(() => {
-    if (!scoreFromProps && typeof window !== "undefined") {
-      try {
-        const savedScore = localStorage.getItem('taiko-practice-render-score');
-        if (savedScore) {
-          const score: Score = JSON.parse(savedScore);
-          console.log('[TaikoPractice] localStorageからscoreを読み込みました:', score);
-          setLocalStorageScore(score);
-        }
-      } catch (error) {
-        console.error('[TaikoPractice] localStorageからの読み込みエラー:', error);
-      }
-    }
-  }, [scoreFromProps]);
-  
-  // scoreFromPropsまたはlocalStorageScoreを使用
-  const effectiveScoreFromProps = scoreFromProps || localStorageScore;
-  
-  // 画面モード管理（レンダリング時は常に'edit'）
-  const [screenMode, setScreenMode] = useState<ScreenMode>(isRenderingMode ? 'edit' : 'home');
+  // 画面モード管理（編集専用なので常にブラウザ環境）
+  const [screenMode, setScreenMode] = useState<ScreenMode>('home');
   
   // 動画ファイルのパス（Blob URLのみ、Supabaseから読み込む）
   const [videoSrc, setVideoSrc] = useState<string>("");
   const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null); // Blob URLを保持
   
   // 譜面データを読み込み
-  // レンダリング時は、scoreFromPropsまたはlocalStorageScoreを優先的に使用
-  const [score, setScore] = useState<Score | null>(effectiveScoreFromProps || null);
+  // レンダリング時は、scoreFromPropsを優先的に使用
+  // scoreFromPropsが有効なデータを持っているかチェック（空のオブジェクトや不完全なデータは無視）
+  const hasValidScoreFromProps = scoreFromProps && 
+    scoreFromProps.duration > 0 && 
+    scoreFromProps.fps > 0;
+  const [score, setScore] = useState<Score | null>(hasValidScoreFromProps ? scoreFromProps : null);
   const [selectedImageFile, setSelectedImageFile] = useState<NoteImageFile>("red_left_1.png");
   const scoreRef = useRef<Score | null>(null); // scoreの最新値を保持
   const [judgeLineEffectFrame, setJudgeLineEffectFrame] = useState<number | null>(null); // エフェクト開始フレーム
@@ -257,78 +225,22 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   // 現在の時刻（秒）
   const currentTime = frame / fps;
   
-  // デバッグ用: レンダリング時の情報をログ出力（開発環境のみ）
+  // デバッグ用: 編集時の情報をログ出力（開発環境のみ）
   useEffect(() => {
-    if (process.env.NODE_ENV === 'development' && frame % 30 === 0) {
+    if (process.env.NODE_ENV === 'development' && frame % 30 === 0 && !isRenderingMode) {
       // 30フレームごと（1秒ごと）にログ出力
       const scoreInfo = score ? `loaded (${score.notes.length} notes, duration: ${score.duration}s)` : 'not loaded';
-      console.log(`[Render Debug] Frame: ${frame}, Time: ${currentTime.toFixed(3)}s, VideoSrc: ${videoSrc.substring(0, 50)}..., Score: ${scoreInfo}`);
+      console.log(`[Editor Debug] Frame: ${frame}, Time: ${currentTime.toFixed(3)}s, VideoSrc: ${videoSrc ? videoSrc.substring(0, 50) : 'empty'}..., Score: ${scoreInfo}`);
     }
-  }, [frame, currentTime, videoSrc, score]);
-  
-  // レンダリング開始時の状態をログ出力
-  useEffect(() => {
-    if (isRenderingMode) {
-      const scoreInfo = score ? `loaded (${score.notes.length} notes, duration: ${score.duration}s, fps: ${score.fps})` : 'not loaded';
-      console.log(`[Render Start] isRenderingMode: ${isRenderingMode}, screenMode: ${screenMode}, hideUI: ${hideUI}, scoreFromProps: ${effectiveScoreFromProps ? 'provided' : 'not provided'}, scoreFile: ${scoreFile || 'not provided'}, score: ${scoreInfo}, videoSrc: ${videoSrc ? videoSrc.substring(0, 50) : 'empty'}...`);
-    }
-  }, [isRenderingMode, screenMode, hideUI, effectiveScoreFromProps, scoreFile, score, videoSrc]);
+  }, [frame, currentTime, videoSrc, score, isRenderingMode]);
   
   // 編集画面の場合のみ、既存のscoreFile/scoreFromPropsから読み込む
+  // 注意: このコンポーネントは編集専用（Studio環境）です。レンダリング時はTaikoPracticeRenderを使用してください。
   useEffect(() => {
-    // レンダリング時は、effectiveScoreFromPropsを優先的に使用
-    if (isRenderingMode && effectiveScoreFromProps) {
-      setScore(effectiveScoreFromProps);
-      return;
-    }
-    
-    // レンダリング時は、effectiveScoreFromPropsまたはSupabaseから読み込む
-    // ローカルファイルからの読み込みは行わない（全てSupabaseで管理）
+    // レンダリング時（isRenderingMode）の場合は何もしない
+    // レンダリング時はTaikoPracticeRenderコンポーネントを使用する
     if (isRenderingMode) {
-      // effectiveScoreFromPropsが既に設定されている場合はスキップ
-      if (effectiveScoreFromProps) {
-        // effectiveScoreFromPropsにsupabaseVideoPathとsupabaseJsonPathが含まれている場合、動画を読み込む
-        if (effectiveScoreFromProps.supabaseVideoPath && effectiveScoreFromProps.supabaseJsonPath && !videoSrc) {
-          // Supabaseから動画と譜面データを読み込む
-          supabase.storage
-            .from('assets')
-            .download(effectiveScoreFromProps.supabaseVideoPath)
-            .then(({ data: videoData, error: videoError }) => {
-              if (videoError || !videoData) {
-                console.error('[Render] 動画ファイルの読み込みエラー:', videoError);
-                return;
-              }
-              // 動画をBlob URLに変換
-              const blobUrl = URL.createObjectURL(videoData as Blob);
-              setVideoBlobUrl(blobUrl);
-              setVideoSrc(blobUrl);
-            })
-            .catch((error) => {
-              console.error('[Render] 動画ファイルの読み込みエラー:', error);
-            });
-        }
-        return;
-      }
-      // effectiveScoreFromPropsがない場合、scoreにsupabaseProjectIdが含まれている場合はSupabaseから読み込む
-      if (score && score.supabaseProjectId && score.supabaseVideoPath && score.supabaseJsonPath) {
-        // Supabaseから動画と譜面データを読み込む
-        supabase.storage
-          .from('assets')
-          .download(score.supabaseVideoPath)
-          .then(({ data: videoData, error: videoError }) => {
-            if (videoError || !videoData) {
-              console.error('[Render] 動画ファイルの読み込みエラー:', videoError);
-              return;
-            }
-            // 動画をBlob URLに変換
-            const blobUrl = URL.createObjectURL(videoData as Blob);
-            setVideoBlobUrl(blobUrl);
-            setVideoSrc(blobUrl);
-          })
-          .catch((error) => {
-            console.error('[Render] 動画ファイルの読み込みエラー:', error);
-          });
-      }
+      console.warn('[TaikoPractice] このコンポーネントは編集専用です。レンダリング時はTaikoPracticeRenderを使用してください。');
       return;
     }
     
@@ -343,15 +255,15 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     }
     
     // propsで直接譜面データが指定されている場合はそれを使用
-    if (effectiveScoreFromProps) {
-      setScore(effectiveScoreFromProps);
+    if (scoreFromProps) {
+      setScore(scoreFromProps);
       return;
     }
     
     // 編集画面では、Supabaseから読み込んだデータのみを使用
     // ローカルファイルからの読み込みは行わない（全てSupabaseで管理）
     // scoreFileからの読み込みは行わない
-  }, [scoreFile, effectiveScoreFromProps, screenMode, score, isRenderingMode]);
+  }, [scoreFile, scoreFromProps, screenMode, score, isRenderingMode]);
   
   // 一番近いノーツを常に取得
   // showPassedNotesがtrueの場合は判定枠を過ぎたノーツも含める
@@ -770,7 +682,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   // レンダリング時（isRenderingMode）の場合は、screenModeに関係なく編集画面を表示
   // レンダリング時は、ホーム画面を表示しない（編集画面を表示する）
   // 「動画の出力準備」ボタンが押された時も、edit画面に強制切り替えされるため、home画面は表示されない
-  if (!isRenderingMode && screenMode === 'home' && !score && !effectiveScoreFromProps) {
+  if (!isRenderingMode && screenMode === 'home' && !score && !hasValidScoreFromProps) {
     // レンダリング時は、このreturn文を実行しない（編集画面を表示する）
     // isRenderingModeがtrueの場合は、この条件ブロックをスキップする
     return (
@@ -844,7 +756,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   // 新規制作ページ（レンダリング時は表示しない）
   // レンダリング時は、新規制作画面を表示しない（編集画面を表示する）
   // 「動画の出力準備」ボタンが押された時も、edit画面に強制切り替えされるため、new画面は表示されない
-  if (!isRenderingMode && screenMode === 'new' && !score && !effectiveScoreFromProps) {
+  if (!isRenderingMode && screenMode === 'new' && !score && !hasValidScoreFromProps) {
     return (
       <AbsoluteFill
         style={{
@@ -956,7 +868,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   // 既存プロジェクト選択ページ（レンダリング時は表示しない）
   // レンダリング時は、既存プロジェクト選択画面を表示しない（編集画面を表示する）
   // 「動画の出力準備」ボタンが押された時も、edit画面に強制切り替えされるため、select画面は表示されない
-  if (!isRenderingMode && screenMode === 'select' && !score && !effectiveScoreFromProps) {
+  if (!isRenderingMode && screenMode === 'select' && !score && !hasValidScoreFromProps) {
     return (
       <AbsoluteFill
         style={{
@@ -1048,9 +960,9 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   }
   
   // 譜面データが読み込まれるまで待つ（編集画面）
-  // レンダリング時は、effectiveScoreFromPropsが読み込まれるまで待つ（Supabaseから読み込まれたデータ）
+  // レンダリング時は、scoreFromPropsが読み込まれるまで待つ（Supabaseから読み込まれたデータ）
   // ローカルファイルからの読み込みは行わない（全てSupabaseで管理）
-  if (!score && (isRenderingMode || effectiveScoreFromProps)) {
+  if (!score && (isRenderingMode || hasValidScoreFromProps)) {
     // レンダリング時は、scoreが読み込まれるまで編集画面のレイアウトを維持
     // （空の状態でも編集画面の構造を表示）
     return (
@@ -1071,7 +983,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   
   // レンダリング時以外でscoreが存在しない場合は、トップページに戻る
   // レンダリング時は、scoreがなくても編集画面を表示する（譜面データを読み込み中...が表示される）
-  if (!score && !isRenderingMode && !effectiveScoreFromProps) {
+  if (!score && !isRenderingMode && !hasValidScoreFromProps) {
     return (
       <AbsoluteFill
         style={{
@@ -1651,62 +1563,412 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
               
               setIsRendering(true);
               
+              // デバッグ: 現在のscoreの状態を確認
+              console.log('[動画の出力準備] 現在のscore:', {
+                name: score.name,
+                duration: score.duration,
+                fps: score.fps,
+                notesCount: score.notes.length,
+                supabaseProjectId: score.supabaseProjectId,
+                supabaseVideoPath: score.supabaseVideoPath,
+                supabaseJsonPath: score.supabaseJsonPath,
+              });
+              
               // 動画出力用の設定
               setShowPassedNotes(false); // 通過ノーツ表示をOFF
               setShowSelectedNoteAnimation(false); // 選択ノーツ表示を無効化
               setHideUI(true); // UIを非表示にする
               setScreenMode('edit'); // edit画面に強制切り替え（home, new, selectを非表示にする）
               
-              // 1. 現在編集中のscoreをlocalStorageに保存（レンダリング時にpropsとして使用）
+              // Remotion StudioのレンダリングUIでscoreを参照できるように、windowオブジェクトに保存
               try {
-                if (typeof window !== "undefined") {
-                  localStorage.setItem('taiko-practice-render-score', JSON.stringify(score));
-                  console.log('[Render Prep] scoreをlocalStorageに保存しました:', score);
+                // Supabase Storageから動画のpublic URLを取得
+                let videoUrl = '';
+                if (score.supabaseVideoPath) {
+                  // Supabase Storageのpublic URLを生成
+                  const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+                  const videoPath = score.supabaseVideoPath;
+                  // public URL形式: https://{project_id}.supabase.co/storage/v1/object/public/{bucket}/{path}
+                  videoUrl = `${supabaseUrl}/storage/v1/object/public/assets/${videoPath}`;
+                } else {
+                  alert('Supabase Storageの動画パスが設定されていません。\n先にSupabaseにアップロードしてください。');
+                  setIsRendering(false);
+                  return;
                 }
-              } catch (error) {
-                console.error('[Render Prep] localStorageへの保存エラー:', error);
-              }
-              
-              try {
-                // Remotion StudioのAPIを使用してレンダリングを開始
+                
+                // レンダリング用のpropsデータを準備
+                const renderProps = {
+                  score: score,
+                  videoUrl: videoUrl,
+                };
+                
+                // レンダリング用のpropsをwindowオブジェクトに保存（自動設定用）
                 if (typeof window !== "undefined") {
-                  // Remotion StudioのAPIを動的にインポート
-                  const studioModule = await import("@remotion/studio");
+                  (window as any).__TAIKO_PRACTICE_RENDER_PROPS__ = renderProps;
+                  console.log('[動画の出力準備] レンダリング用propsをwindow.__TAIKO_PRACTICE_RENDER_PROPS__に保存しました');
+                  console.log('[動画の出力準備] renderProps:', renderProps);
                   
-                  // Studioの内部APIを使用してレンダリングを開始
-                  // Remotion Studioでは、windowオブジェクト経由でStudioにアクセスできます
-                  if (studioModule && (studioModule as any).openRenderModal) {
-                    // openRenderModal関数が存在する場合
-                    (studioModule as any).openRenderModal('TaikoPractice');
-                    alert('レンダリング画面を開きました。');
-                  } else if ((window as any).remotionStudio) {
-                    // StudioのAPIが利用可能な場合
-                    const studio = (window as any).remotionStudio;
-                    if (studio.openRenderModal) {
-                      studio.openRenderModal('TaikoPractice');
-                      alert('レンダリング画面を開きました。');
+                  // CLIコマンドを自動生成してクリップボードにコピー
+                  const cliCommand = `npx remotion render src/index.ts TaikoPracticeRender out/video.mp4 --input-props='${JSON.stringify(renderProps)}'`;
+                  
+                  // クリップボードにコピーを試みる
+                  try {
+                    await navigator.clipboard.writeText(cliCommand);
+                    console.log('[動画の出力準備] CLIコマンドをクリップボードにコピーしました');
+                    console.log('[動画の出力準備] CLIコマンド:', cliCommand);
+                  } catch (clipboardError) {
+                    console.log('[動画の出力準備] クリップボードへのコピーに失敗しました（手動でコピーしてください）');
+                    console.log('[動画の出力準備] CLIコマンド:', cliCommand);
+                  }
+                  
+                  // Remotion StudioのRender UIで自動設定するためのスクリプトを準備
+                  const autoSetPropsScript = `
+// Remotion StudioのRender UIで実行してください（ブラウザのコンソールに貼り付けて実行）
+(function() {
+  const props = ${JSON.stringify(renderProps)};
+  const renderPanel = document.querySelector('[data-testid="render-panel"]') || document.querySelector('.render-panel');
+  if (renderPanel) {
+    // Propsタブを開く
+    const propsTab = renderPanel.querySelector('[data-testid="props-tab"]') || renderPanel.querySelector('button:contains("Props")');
+    if (propsTab) propsTab.click();
+    
+    // Propsフィールドに値を設定（Remotion Studioの内部APIを使用）
+    setTimeout(() => {
+      const propsInput = renderPanel.querySelector('textarea, input[type="text"]');
+      if (propsInput) {
+        propsInput.value = JSON.stringify(props, null, 2);
+        propsInput.dispatchEvent(new Event('input', { bubbles: true }));
+        propsInput.dispatchEvent(new Event('change', { bubbles: true }));
+        console.log('[自動設定] Propsを設定しました:', props);
+      } else {
+        console.warn('[自動設定] Props入力フィールドが見つかりませんでした。手動で設定してください。');
+        console.log('[自動設定] 設定する値:', JSON.stringify(props, null, 2));
+      }
+    }, 500);
+  } else {
+    console.warn('[自動設定] Render UIが見つかりませんでした。Render UIを開いてから実行してください。');
+    console.log('[自動設定] 設定する値:', JSON.stringify(props, null, 2));
+  }
+})();
+                  `.trim();
+                  
+                  // 自動設定スクリプトをwindowオブジェクトに保存
+                  (window as any).__TAIKO_PRACTICE_AUTO_SET_PROPS__ = autoSetPropsScript;
+                  console.log('[動画の出力準備] 自動設定スクリプトを準備しました');
+                  console.log('[動画の出力準備] Render UIを開いた後、ブラウザのコンソールで以下を実行してください:');
+                  console.log('eval(window.__TAIKO_PRACTICE_AUTO_SET_PROPS__)');
+                }
+                
+                // Remotion StudioのレンダリングUIを開いて自動設定
+                if (typeof window !== "undefined") {
+                  try {
+                    const studioModule = await import("@remotion/studio");
+                    
+                    // Render UIを開く
+                    if (studioModule && (studioModule as any).openRenderModal) {
+                      (studioModule as any).openRenderModal('TaikoPracticeRender');
                     } else {
-                      // フォールバック: レンダリングUIを開くためにURLパラメータを使用
-                      const currentUrl = new URL(window.location.href);
-                      // Remotion StudioのレンダリングUIは通常、/#/render パスを使用
                       window.location.hash = '#/render';
-                      alert('レンダリング画面を開きました。\n\nComposition: TaikoPractice を選択してレンダリングを開始してください。');
                     }
-                  } else {
-                    // StudioのAPIが利用できない場合、URLハッシュを使用してレンダリングUIを開く
+                    
+                    // Render UIが開いた後に自動設定を実行
+                    // MutationObserverとsetIntervalを組み合わせて、Props入力フィールドが表示されるまで待機
+                    let attempts = 0;
+                    const maxAttempts = 100; // 10秒間待機（100ms × 100）
+                    let propsSetSuccessfully = false;
+                    
+                    // Remotion StudioのRender UIの構造をより広範囲に検索する関数
+                    const findAndSetProps = (): boolean => {
+                      // 方法1: Remotion Studioの内部APIを探す（複数のパターン）
+                      const remotionStudio = (window as any).remotionStudio 
+                        || (window as any).__remotion_studio__
+                        || (window as any).remotion
+                        || (document as any).remotionStudio;
+                      
+                      if (remotionStudio) {
+                        // 様々なAPIメソッド名を試す
+                        const apiMethods = ['setRenderProps', 'setProps', 'updateProps', 'setInputProps'];
+                        for (const method of apiMethods) {
+                          if (typeof remotionStudio[method] === 'function') {
+                            try {
+                              remotionStudio[method]('TaikoPracticeRender', renderProps);
+                              console.log(`[自動設定] Remotion Studio API (${method})を使用してPropsを設定しました`);
+                              return true;
+                            } catch (e) {
+                              console.log(`[自動設定] Remotion Studio API (${method})での設定に失敗:`, e);
+                            }
+                          }
+                        }
+                      }
+                      
+                      // 方法2: Remotion Studioのグローバル状態を直接操作
+                      const contextPatterns = [
+                        '__remotion_context__',
+                        '__remotion_studio_context__',
+                        'remotionContext',
+                        'remotionStudioContext'
+                      ];
+                      
+                      for (const pattern of contextPatterns) {
+                        const context = (window as any)[pattern];
+                        if (context && typeof context.setRenderProps === 'function') {
+                          try {
+                            context.setRenderProps('TaikoPracticeRender', renderProps);
+                            console.log(`[自動設定] Remotion Context (${pattern})を使用してPropsを設定しました`);
+                            return true;
+                          } catch (e) {
+                            console.log(`[自動設定] Remotion Context (${pattern})での設定に失敗:`, e);
+                          }
+                        }
+                      }
+                      
+                      // 方法3: DOM操作でProps入力フィールドを探して設定
+                      // Remotion StudioのRender UIの様々なパターンを試す
+                      const renderPanelSelectors = [
+                        '[data-testid="render-panel"]',
+                        '[data-testid="render-modal"]',
+                        '[data-testid="render-dialog"]',
+                        '.render-panel',
+                        '.render-modal',
+                        '.render-dialog',
+                        '[class*="render"]',
+                        '[class*="Render"]',
+                        '[class*="modal"]',
+                        '[class*="Modal"]',
+                        '[class*="dialog"]',
+                        '[class*="Dialog"]',
+                        '[role="dialog"]',
+                        'aside',
+                        '[class*="sidebar"]',
+                        '[class*="Sidebar"]'
+                      ];
+                      
+                      let renderPanel: Element | null = null;
+                      for (const selector of renderPanelSelectors) {
+                        renderPanel = document.querySelector(selector);
+                        if (renderPanel) {
+                          console.log(`[自動設定] Render UIパネルを発見: ${selector}`);
+                          break;
+                        }
+                      }
+                      
+                      if (!renderPanel) {
+                        // より広範囲に検索
+                        const allModals = Array.from(document.querySelectorAll('[role="dialog"], [class*="modal"], [class*="Modal"]'));
+                        renderPanel = allModals.find(el => {
+                          const text = el.textContent?.toLowerCase() || '';
+                          return text.includes('render') || text.includes('composition') || text.includes('props');
+                        }) || null;
+                      }
+                      
+                      if (renderPanel) {
+                        // Propsタブを探す（より多くのパターン）
+                        const tabSelectors = [
+                          'button',
+                          '[role="tab"]',
+                          '[role="tabbutton"]',
+                          '[class*="tab"]',
+                          '[class*="Tab"]',
+                          'a[href*="props"]'
+                        ];
+                        
+                        let propsTab: HTMLElement | null = null;
+                        for (const selector of tabSelectors) {
+                          const tabs = Array.from(renderPanel.querySelectorAll(selector));
+                          propsTab = tabs.find((el: Element) => {
+                            const text = el.textContent?.toLowerCase() || '';
+                            const ariaLabel = el.getAttribute('aria-label')?.toLowerCase() || '';
+                            return text.includes('props') || 
+                                   text.includes('プロパティ') ||
+                                   ariaLabel.includes('props') ||
+                                   el.getAttribute('data-testid')?.includes('props');
+                          }) as HTMLElement | null;
+                          
+                          if (propsTab) {
+                            console.log(`[自動設定] Propsタブを発見: ${selector}`);
+                            break;
+                          }
+                        }
+                        
+                        if (propsTab) {
+                          // タブをクリック
+                          propsTab.click();
+                          
+                          // Props入力フィールドを探す（より多くのパターン）
+                          const inputSelectors = [
+                            'textarea',
+                            'input[type="text"]',
+                            '[contenteditable="true"]',
+                            '[class*="json"]',
+                            '[class*="JSON"]',
+                            '[class*="code"]',
+                            '[class*="Code"]',
+                            '[class*="editor"]',
+                            '[class*="Editor"]',
+                            '[class*="input"]',
+                            '[class*="Input"]',
+                            '[data-testid*="props"]',
+                            '[data-testid*="input"]'
+                          ];
+                          
+                          // 少し待ってから検索（タブ切り替えのアニメーションを待つ）
+                          setTimeout(() => {
+                            let propsInput: HTMLTextAreaElement | HTMLInputElement | HTMLElement | null = null;
+                            
+                            for (const selector of inputSelectors) {
+                              propsInput = renderPanel!.querySelector(selector) as HTMLTextAreaElement | HTMLInputElement | null;
+                              if (propsInput) {
+                                console.log(`[自動設定] Props入力フィールドを発見: ${selector}`);
+                                break;
+                              }
+                            }
+                            
+                            // まだ見つからない場合、より広範囲に検索
+                            if (!propsInput) {
+                              const allElements = Array.from(renderPanel!.querySelectorAll('*'));
+                              propsInput = allElements.find((el: Element) => {
+                                const style = window.getComputedStyle(el);
+                                const tagName = el.tagName.toLowerCase();
+                                const className = el.className || '';
+                                
+                                // textareaまたはinput要素
+                                if (tagName === 'textarea' || (tagName === 'input' && (el as HTMLInputElement).type === 'text')) {
+                                  return true;
+                                }
+                                
+                                // contenteditable要素
+                                if (el.getAttribute('contenteditable') === 'true') {
+                                  return true;
+                                }
+                                
+                                // monospaceフォントの要素（コードエディタの可能性）
+                                if (style.fontFamily.includes('monospace') || style.fontFamily.includes('Courier')) {
+                                  return true;
+                                }
+                                
+                                // props関連のdata-testid
+                                if (el.getAttribute('data-testid')?.includes('props') || 
+                                    el.getAttribute('data-testid')?.includes('input')) {
+                                  return true;
+                                }
+                                
+                                return false;
+                              }) as HTMLElement | null;
+                            }
+                            
+                            if (propsInput) {
+                              const propsJson = JSON.stringify(renderProps, null, 2);
+                              
+                              // 値を設定
+                              if (propsInput instanceof HTMLTextAreaElement || propsInput instanceof HTMLInputElement) {
+                                // ReactのonChangeイベントを正しく発火させる
+                                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                                  window.HTMLTextAreaElement?.prototype || window.HTMLInputElement?.prototype,
+                                  'value'
+                                )?.set;
+                                
+                                if (nativeInputValueSetter) {
+                                  nativeInputValueSetter.call(propsInput, propsJson);
+                                } else {
+                                  propsInput.value = propsJson;
+                                }
+                                
+                                // 複数のイベントを発火
+                                const events = ['input', 'change', 'keyup', 'keydown', 'paste'];
+                                events.forEach(eventType => {
+                                  propsInput.dispatchEvent(new Event(eventType, { bubbles: true, cancelable: true }));
+                                });
+                                
+                                // Reactの合成イベントも発火
+                                const reactEvent = new Event('input', { bubbles: true });
+                                Object.defineProperty(reactEvent, 'target', { value: propsInput, enumerable: true });
+                                propsInput.dispatchEvent(reactEvent);
+                                
+                              } else {
+                                // HTMLElementとして扱う
+                                const htmlElement = propsInput as HTMLElement;
+                                if (htmlElement.isContentEditable) {
+                                  htmlElement.textContent = propsJson;
+                                  htmlElement.dispatchEvent(new Event('input', { bubbles: true }));
+                                  htmlElement.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                              }
+                              
+                              console.log('[自動設定] DOM操作でPropsを設定しました');
+                              propsSetSuccessfully = true;
+                            }
+                          }, 500); // タブ切り替えのアニメーションを待つ
+                        }
+                      }
+                      
+                      return propsSetSuccessfully;
+                    };
+                    
+                    // MutationObserverでDOMの変更を監視
+                    const observer = new MutationObserver(() => {
+                      if (!propsSetSuccessfully && findAndSetProps()) {
+                        propsSetSuccessfully = true;
+                        observer.disconnect();
+                      }
+                    });
+                    
+                    // ドキュメント全体を監視
+                    observer.observe(document.body, {
+                      childList: true,
+                      subtree: true,
+                      attributes: true,
+                      attributeFilter: ['class', 'data-testid']
+                    });
+                    
+                    // 自動設定を試行（Render UIが開くまで待機）
+                    const intervalId = setInterval(() => {
+                      attempts++;
+                      
+                      if (propsSetSuccessfully || attempts >= maxAttempts) {
+                        clearInterval(intervalId);
+                        observer.disconnect();
+                        
+                        if (propsSetSuccessfully) {
+                          console.log('[自動設定] Propsの自動設定が完了しました');
+                          setTimeout(() => {
+                            alert('レンダリング画面を開きました。\n\n✅ Propsを自動設定しました。\n\nComposition: TaikoPracticeRender を選択してレンダリングを開始してください。');
+                          }, 1000);
+                        } else {
+                          console.warn('[自動設定] Propsの自動設定に失敗しました。手動で設定してください。');
+                          alert(`レンダリング画面を開きました。
+
+Composition: TaikoPracticeRender を選択してください。
+
+⚠️ Propsの自動設定に失敗しました。
+「Props」タブで手動で設定してください。
+
+設定する値:
+score: ${JSON.stringify(score, null, 2).substring(0, 200)}...
+videoUrl: ${videoUrl}`);
+                        }
+                      } else {
+                        // 定期的に自動設定を試行
+                        findAndSetProps();
+                      }
+                    }, 100);
+                    
+                  } catch (error) {
+                    console.error('レンダリングUIを開く際にエラーが発生しました:', error);
                     window.location.hash = '#/render';
-                    alert('レンダリング画面を開きました。\n\nComposition: TaikoPractice を選択してレンダリングを開始してください。');
+                    alert(`レンダリング画面を開きました。
+
+Composition: TaikoPracticeRender を選択してください。
+
+「Props」タブで以下を設定してください:
+score: ${JSON.stringify(score, null, 2).substring(0, 200)}...
+videoUrl: ${videoUrl}`);
                   }
                 } else {
                   alert('Remotion Studio環境で実行してください。');
                 }
               } catch (error) {
-                console.error('レンダリング開始エラー:', error);
-                // エラーが発生した場合でも、レンダリングUIを開く
-                if (typeof window !== "undefined") {
-                  window.location.hash = '#/render';
-                  alert('レンダリング画面を開きました。\n\nComposition: TaikoPractice を選択してレンダリングを開始してください。');
-                }
+                console.error('レンダリング準備エラー:', error);
+                alert(`エラー: ${error instanceof Error ? error.message : '不明なエラー'}`);
               } finally {
                 setIsRendering(false);
               }

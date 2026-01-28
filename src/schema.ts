@@ -25,10 +25,18 @@ const scoreSchema = z.object({
   notes: z.array(noteSchema).describe("ノーツのリスト"),
 });
 
-// 譜面ファイル名または譜面データのスキーマ定義
+// 譜面ファイル名または譜面データのスキーマ定義（編集用）
 export const taikoPracticeSchema = z.object({
   scoreFile: z.string().optional().describe("譜面データファイル名（publicフォルダ内）"),
   score: scoreSchema.optional().describe("譜面データ（直接指定する場合）"),
 });
 
 export type TaikoPracticeProps = z.infer<typeof taikoPracticeSchema>;
+
+// レンダリング用のスキーマ定義（Blob URL禁止、Supabase URL必須）
+export const taikoPracticeRenderSchema = z.object({
+  score: scoreSchema.describe("譜面データ（必須）"),
+  videoUrl: z.string().url().describe("Supabase Storageの動画URL（必須、Blob URL不可）"),
+});
+
+export type TaikoPracticeRenderProps = z.infer<typeof taikoPracticeRenderSchema>;
