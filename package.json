@@ -4,6 +4,8 @@
   "description": "太鼓練習のための太鼓の達人っぽい動画を作るツール",
   "main": "index.js",
   "scripts": {
+    "list-videos": "node scripts/list-videos.js",
+    "prestart": "npm run list-videos",
     "start": "remotion studio",
     "build": "remotion render TaikoPractice out/video.mp4",
     "preview": "remotion preview"

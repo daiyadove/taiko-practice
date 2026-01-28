@@ -38,17 +38,20 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
   
-  // 動画ファイルのパス
-  const videoSrc = staticFile("videos/basunotori_short_test.mp4");
-  
   // 譜面データを読み込み
   const [score, setScore] = useState<Score | null>(null);
+  // 動画ファイルリスト
+  const [videosList, setVideosList] = useState<{ videos: string[]; defaultVideo: string | null } | null>(null);
+  // 動画ファイルのパス（score.videoPathまたは自動検出）
+  const [videoPath, setVideoPath] = useState<string | null>(null);
   const [selectedImageFile, setSelectedImageFile] = useState<NoteImageFile>("red_left_1.png");
   const scoreRef = useRef<Score | null>(null); // scoreの最新値を保持
   const [judgeLineEffectFrame, setJudgeLineEffectFrame] = useState<number | null>(null); // エフェクト開始フレーム
   const previousVisibleNotesRef = useRef<Set<string>>(new Set()); // 前フレームの表示ノーツを記録
-  const [showSelectedNoteAnimation, setShowSelectedNoteAnimation] = useState<boolean>(true); // 選択ノーツ表示の有効/無効
-  const [showPassedNotes, setShowPassedNotes] = useState<boolean>(true); // 通過ノーツ表示の有効/無効（デフォルトON）
+  const [showSelectedNoteAnimation, setShowSelectedNoteAnimation] = useState<boolean>(false); // 選択ノーツ表示の有効/無効（デフォルトOFF）
+  const [showPassedNotes, setShowPassedNotes] = useState<boolean>(false); // 通過ノーツ表示の有効/無効（デフォルトOFF）
+  const [showKeyGuide, setShowKeyGuide] = useState<boolean>(false); // キー操作ガイドの表示/非表示（デフォルト非表示）
+  const [showEditPanel, setShowEditPanel] = useState<boolean>(false); // 編集パネルの表示/非表示（デフォルト非表示）
   
   // scoreが変更されたときにrefを更新
   useEffect(() => {
@@ -57,6 +60,37 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   
   // 現在の時刻（秒）
   const currentTime = frame / fps;
+  
+  // 動画ファイルリストを読み込む
+  useEffect(() => {
+    fetch(staticFile("videos-list.json"))
+      .then((res) => res.json())
+      .then((data: { videos: string[]; defaultVideo: string | null }) => {
+        setVideosList(data);
+        console.log("動画ファイルリストを読み込みました:", data);
+      })
+      .catch((error) => {
+        console.warn("動画ファイルリストの読み込みに失敗しました（無視します）:", error);
+        // エラー時は空のリストを設定
+        setVideosList({ videos: [], defaultVideo: null });
+      });
+  }, []);
+  
+  // scoreが変更されたときに動画パスを決定
+  useEffect(() => {
+    if (score && score.videoPath) {
+      // score.jsonにvideoPathが指定されている場合はそれを使用
+      setVideoPath(score.videoPath);
+      console.log("譜面データから動画パスを取得:", score.videoPath);
+    } else if (videosList && videosList.defaultVideo) {
+      // score.jsonにvideoPathがない場合は、動画リストからデフォルト動画を使用
+      setVideoPath(videosList.defaultVideo);
+      console.log("動画リストからデフォルト動画を使用:", videosList.defaultVideo);
+    } else {
+      // どちらもない場合はnullのまま（エラー表示用）
+      setVideoPath(null);
+    }
+  }, [score, videosList]);
   
   useEffect(() => {
     // propsで直接譜面データが指定されている場合はそれを使用
@@ -77,9 +111,9 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       .then((data: Score) => setScore(data))
       .catch((error) => {
         console.error(`譜面データの読み込みに失敗しました: ${fileToLoad}`, error);
-        // フォールバック用の空の譜面データ
+        // フォールバック用の空の譜面データ（videoPathは後で自動検出される）
         setScore({
-          videoPath: "basunotori_short_test.mp4",
+          videoPath: "",
           duration: 0,
           fps: 30,
           notes: [],
@@ -162,6 +196,14 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       // テキスト入力フィールドにフォーカスがある場合は無視
       const target = event.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+      
+      // スペースキーでキー操作ガイドと編集パネルを表示（一度表示したら常に表示）
+      if (event.key === ' ') {
+        event.preventDefault(); // デフォルト動作（スクロール）を防ぐ
+        setShowKeyGuide(true);
+        setShowEditPanel(true);
         return;
       }
       
@@ -423,6 +465,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       }}
     >
       {/* キー操作ガイド（左上） */}
+      {showKeyGuide && (
       <div
         style={{
           position: "absolute",
@@ -478,6 +521,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
           </div>
         </div>
       </div>
+      )}
       
       {/* 上部：元動画エリア */}
       <div
@@ -491,15 +535,30 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
           position: "relative",
         }}
       >
-        <OffthreadVideo
-          src={videoSrc}
-          style={{
+        {videoPath ? (
+          <OffthreadVideo
+            src={staticFile(videoPath)}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+            }}
+            startFrom={0}
+          />
+        ) : (
+          <div style={{
             width: "100%",
             height: "100%",
-            objectFit: "contain",
-          }}
-          startFrom={0}
-        />
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: "#000",
+            color: "#fff",
+            fontSize: "24px",
+          }}>
+            動画ファイルが見つかりません。public/videos/フォルダに動画ファイルを配置してください。
+          </div>
+        )}
       </div>
 
       {/* 下部：ノーツUI */}
@@ -542,7 +601,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       </div>
       
       {/* 編集UI（Remotion Studio環境でのみ表示） */}
-      {typeof window !== "undefined" && (
+      {typeof window !== "undefined" && showEditPanel && (
         <div
           style={{
             position: "absolute",
