@@ -6,6 +6,19 @@ import type { Score, Note as NoteType, NoteImageFile } from "./types/score";
 import { getHandFromImageFile } from "./types/score";
 import type { TaikoPracticeProps } from "./schema";
 import { supabase } from "./lib/supabase";
+import { getVideoMetadata } from "@remotion/media-utils";
+
+// 画面モードの型定義
+type ScreenMode = 'home' | 'new' | 'select' | 'edit';
+
+// Supabaseから取得する動画情報の型定義
+interface VideoInfo {
+  id: string;
+  name: string;
+  video_path: string;
+  json_path: string;
+  created_at?: string;
+}
 
 // Remotion Studioのseek関数を使用する関数
 const seekToFrame = (frame: number) => {
@@ -39,11 +52,56 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
   
-  // 動画ファイルのパス
-  const videoSrc = staticFile("videos/basunotori_short_test.mp4");
+  // レンダリング時かどうかを判定（typeof window === "undefined"）
+  const isRenderingMode = typeof window === "undefined";
+  
+  // 1. レンダリング時に、localStorageからscoreを読み込んでpropsとして使用
+  // scoreFromPropsがない場合、localStorageから読み込む（レンダリング準備時に保存されたデータ）
+  const [localStorageScore, setLocalStorageScore] = useState<Score | null>(() => {
+    // 初期化時にlocalStorageから読み込む（レンダリング時のみ）
+    if (!scoreFromProps && typeof window !== "undefined") {
+      try {
+        const savedScore = localStorage.getItem('taiko-practice-render-score');
+        if (savedScore) {
+          const score: Score = JSON.parse(savedScore);
+          console.log('[TaikoPractice] localStorageからscoreを初期化時に読み込みました:', score);
+          return score;
+        }
+      } catch (error) {
+        console.error('[TaikoPractice] localStorageからの読み込みエラー:', error);
+      }
+    }
+    return null;
+  });
+  
+  useEffect(() => {
+    if (!scoreFromProps && typeof window !== "undefined") {
+      try {
+        const savedScore = localStorage.getItem('taiko-practice-render-score');
+        if (savedScore) {
+          const score: Score = JSON.parse(savedScore);
+          console.log('[TaikoPractice] localStorageからscoreを読み込みました:', score);
+          setLocalStorageScore(score);
+        }
+      } catch (error) {
+        console.error('[TaikoPractice] localStorageからの読み込みエラー:', error);
+      }
+    }
+  }, [scoreFromProps]);
+  
+  // scoreFromPropsまたはlocalStorageScoreを使用
+  const effectiveScoreFromProps = scoreFromProps || localStorageScore;
+  
+  // 画面モード管理（レンダリング時は常に'edit'）
+  const [screenMode, setScreenMode] = useState<ScreenMode>(isRenderingMode ? 'edit' : 'home');
+  
+  // 動画ファイルのパス（Blob URLのみ、Supabaseから読み込む）
+  const [videoSrc, setVideoSrc] = useState<string>("");
+  const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null); // Blob URLを保持
   
   // 譜面データを読み込み
-  const [score, setScore] = useState<Score | null>(null);
+  // レンダリング時は、scoreFromPropsまたはlocalStorageScoreを優先的に使用
+  const [score, setScore] = useState<Score | null>(effectiveScoreFromProps || null);
   const [selectedImageFile, setSelectedImageFile] = useState<NoteImageFile>("red_left_1.png");
   const scoreRef = useRef<Score | null>(null); // scoreの最新値を保持
   const [judgeLineEffectFrame, setJudgeLineEffectFrame] = useState<number | null>(null); // エフェクト開始フレーム
@@ -51,43 +109,249 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
   const [showSelectedNoteAnimation, setShowSelectedNoteAnimation] = useState<boolean>(true); // 選択ノーツ表示の有効/無効
   const [showPassedNotes, setShowPassedNotes] = useState<boolean>(true); // 通過ノーツ表示の有効/無効（デフォルトON）
   const [isUploading, setIsUploading] = useState<boolean>(false); // Supabaseアップロード中の状態
+  const [isRendering, setIsRendering] = useState<boolean>(false); // 動画レンダリング中の状態
+  const [hideUI, setHideUI] = useState<boolean>(false); // UI（キー操作パネル・編集パネル）を非表示にするフラグ
+  
+  // 新規制作用の状態
+  const [projectName, setProjectName] = useState<string>('');
+  const [selectedVideoFile, setSelectedVideoFile] = useState<File | null>(null);
+  
+  // 既存プロジェクト選択用の状態
+  const [videoList, setVideoList] = useState<VideoInfo[]>([]);
+  const [isLoadingVideos, setIsLoadingVideos] = useState<boolean>(false);
   
   // scoreが変更されたときにrefを更新
   useEffect(() => {
     scoreRef.current = score;
   }, [score]);
   
-  // 現在の時刻（秒）
-  const currentTime = frame / fps;
+  // Supabaseから動画一覧を取得
+  const loadVideoList = useCallback(async () => {
+    setIsLoadingVideos(true);
+    try {
+      const { data, error } = await supabase
+        .from('videos')
+        .select('id, name, video_path, json_path, created_at')
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        throw error;
+      }
+      
+      setVideoList(data || []);
+    } catch (error) {
+      console.error('動画一覧の取得に失敗しました:', error);
+      alert(`動画一覧の取得に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
+    } finally {
+      setIsLoadingVideos(false);
+    }
+  }, []);
   
-  useEffect(() => {
-    // propsで直接譜面データが指定されている場合はそれを使用
-    if (scoreFromProps) {
-      setScore(scoreFromProps);
+  // Supabaseから動画とJSONを取得して編集画面に遷移
+  const loadProjectFromSupabase = useCallback(async (videoInfo: VideoInfo) => {
+    try {
+      // 動画ファイルを取得
+      const { data: videoData, error: videoError } = await supabase.storage
+        .from('assets')
+        .download(videoInfo.video_path);
+      
+      if (videoError || !videoData) {
+        throw new Error(`動画ファイルの取得に失敗しました: ${videoError?.message || 'ファイルが見つかりません'}`);
+      }
+      
+      // JSONファイルを取得
+      const { data: jsonData, error: jsonError } = await supabase.storage
+        .from('assets')
+        .download(videoInfo.json_path);
+      
+      if (jsonError || !jsonData) {
+        throw new Error(`JSONファイルの取得に失敗しました: ${jsonError?.message || 'ファイルが見つかりません'}`);
+      }
+      
+      // JSONをパース（jsonDataはBlobなので、text()でテキストに変換）
+      const jsonText = await jsonData.text();
+      const scoreData: Score = JSON.parse(jsonText);
+      
+      // プロジェクト名がJSONにない場合は、Supabaseのnameを使用
+      if (!scoreData.name && videoInfo.name) {
+        scoreData.name = videoInfo.name;
+      }
+      
+      // Supabaseの情報をscoreに保存（レンダリング時に使用）
+      scoreData.supabaseProjectId = videoInfo.id;
+      scoreData.supabaseVideoPath = videoInfo.video_path;
+      scoreData.supabaseJsonPath = videoInfo.json_path;
+      
+      // 動画をBlob URLに変換（videoDataはBlob）
+      const blobUrl = URL.createObjectURL(videoData as Blob);
+      
+      // 既存のBlob URLをクリーンアップ
+      if (videoBlobUrl) {
+        URL.revokeObjectURL(videoBlobUrl);
+      }
+      
+      setVideoBlobUrl(blobUrl);
+      setVideoSrc(blobUrl);
+      setScore(scoreData);
+      setScreenMode('edit');
+    } catch (error) {
+      console.error('プロジェクトの読み込みに失敗しました:', error);
+      alert(`プロジェクトの読み込みに失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
+    }
+  }, [videoBlobUrl]);
+  
+  // 新規制作：動画を選択して初期化
+  const initializeNewProject = useCallback(async () => {
+    if (!projectName.trim()) {
+      alert('プロジェクト名を入力してください');
       return;
     }
     
-    // そうでない場合はファイルから読み込む
-    // scoreFileが未定義または空の場合はデフォルト値を使用
-    const fileToLoad = scoreFile || "score.json";
+    if (!selectedVideoFile) {
+      alert('動画ファイルを選択してください');
+      return;
+    }
     
-    // scoreFileが変更されたときに再読み込み
-    setScore(null); // 読み込み中状態にリセット
+    try {
+      // 動画のメタデータを取得
+      const videoBlob = await selectedVideoFile.arrayBuffer();
+      const blob = new Blob([videoBlob], { type: selectedVideoFile.type });
+      const blobUrl = URL.createObjectURL(blob);
+      
+      // 既存のBlob URLをクリーンアップ
+      if (videoBlobUrl) {
+        URL.revokeObjectURL(videoBlobUrl);
+      }
+      
+      setVideoBlobUrl(blobUrl);
+      setVideoSrc(blobUrl);
+      
+      // 動画のメタデータを取得してscore.jsonを初期化
+      const videoMetadata = await getVideoMetadata(blobUrl);
+      
+      const initialScore: Score = {
+        name: projectName.trim(),
+        videoPath: selectedVideoFile.name,
+        duration: videoMetadata.durationInSeconds,
+        fps: fps,
+        notes: [],
+      };
+      
+      setScore(initialScore);
+      setScreenMode('edit');
+    } catch (error) {
+      console.error('プロジェクトの初期化に失敗しました:', error);
+      alert(`プロジェクトの初期化に失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
+    }
+  }, [projectName, selectedVideoFile, fps, videoBlobUrl]);
+  
+  // コンポーネントのアンマウント時にBlob URLをクリーンアップ
+  useEffect(() => {
+    return () => {
+      if (videoBlobUrl) {
+        URL.revokeObjectURL(videoBlobUrl);
+      }
+    };
+  }, [videoBlobUrl]);
+  
+  // 現在の時刻（秒）
+  const currentTime = frame / fps;
+  
+  // デバッグ用: レンダリング時の情報をログ出力（開発環境のみ）
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development' && frame % 30 === 0) {
+      // 30フレームごと（1秒ごと）にログ出力
+      const scoreInfo = score ? `loaded (${score.notes.length} notes, duration: ${score.duration}s)` : 'not loaded';
+      console.log(`[Render Debug] Frame: ${frame}, Time: ${currentTime.toFixed(3)}s, VideoSrc: ${videoSrc.substring(0, 50)}..., Score: ${scoreInfo}`);
+    }
+  }, [frame, currentTime, videoSrc, score]);
+  
+  // レンダリング開始時の状態をログ出力
+  useEffect(() => {
+    if (isRenderingMode) {
+      const scoreInfo = score ? `loaded (${score.notes.length} notes, duration: ${score.duration}s, fps: ${score.fps})` : 'not loaded';
+      console.log(`[Render Start] isRenderingMode: ${isRenderingMode}, screenMode: ${screenMode}, hideUI: ${hideUI}, scoreFromProps: ${effectiveScoreFromProps ? 'provided' : 'not provided'}, scoreFile: ${scoreFile || 'not provided'}, score: ${scoreInfo}, videoSrc: ${videoSrc ? videoSrc.substring(0, 50) : 'empty'}...`);
+    }
+  }, [isRenderingMode, screenMode, hideUI, effectiveScoreFromProps, scoreFile, score, videoSrc]);
+  
+  // 編集画面の場合のみ、既存のscoreFile/scoreFromPropsから読み込む
+  useEffect(() => {
+    // レンダリング時は、effectiveScoreFromPropsを優先的に使用
+    if (isRenderingMode && effectiveScoreFromProps) {
+      setScore(effectiveScoreFromProps);
+      return;
+    }
     
-    fetch(staticFile(fileToLoad))
-      .then((res) => res.json())
-      .then((data: Score) => setScore(data))
-      .catch((error) => {
-        console.error(`譜面データの読み込みに失敗しました: ${fileToLoad}`, error);
-        // フォールバック用の空の譜面データ
-        setScore({
-          videoPath: "basunotori_short_test.mp4",
-          duration: 0,
-          fps: 30,
-          notes: [],
-        });
-      });
-  }, [scoreFile, scoreFromProps]);
+    // レンダリング時は、effectiveScoreFromPropsまたはSupabaseから読み込む
+    // ローカルファイルからの読み込みは行わない（全てSupabaseで管理）
+    if (isRenderingMode) {
+      // effectiveScoreFromPropsが既に設定されている場合はスキップ
+      if (effectiveScoreFromProps) {
+        // effectiveScoreFromPropsにsupabaseVideoPathとsupabaseJsonPathが含まれている場合、動画を読み込む
+        if (effectiveScoreFromProps.supabaseVideoPath && effectiveScoreFromProps.supabaseJsonPath && !videoSrc) {
+          // Supabaseから動画と譜面データを読み込む
+          supabase.storage
+            .from('assets')
+            .download(effectiveScoreFromProps.supabaseVideoPath)
+            .then(({ data: videoData, error: videoError }) => {
+              if (videoError || !videoData) {
+                console.error('[Render] 動画ファイルの読み込みエラー:', videoError);
+                return;
+              }
+              // 動画をBlob URLに変換
+              const blobUrl = URL.createObjectURL(videoData as Blob);
+              setVideoBlobUrl(blobUrl);
+              setVideoSrc(blobUrl);
+            })
+            .catch((error) => {
+              console.error('[Render] 動画ファイルの読み込みエラー:', error);
+            });
+        }
+        return;
+      }
+      // effectiveScoreFromPropsがない場合、scoreにsupabaseProjectIdが含まれている場合はSupabaseから読み込む
+      if (score && score.supabaseProjectId && score.supabaseVideoPath && score.supabaseJsonPath) {
+        // Supabaseから動画と譜面データを読み込む
+        supabase.storage
+          .from('assets')
+          .download(score.supabaseVideoPath)
+          .then(({ data: videoData, error: videoError }) => {
+            if (videoError || !videoData) {
+              console.error('[Render] 動画ファイルの読み込みエラー:', videoError);
+              return;
+            }
+            // 動画をBlob URLに変換
+            const blobUrl = URL.createObjectURL(videoData as Blob);
+            setVideoBlobUrl(blobUrl);
+            setVideoSrc(blobUrl);
+          })
+          .catch((error) => {
+            console.error('[Render] 動画ファイルの読み込みエラー:', error);
+          });
+      }
+      return;
+    }
+    
+    // 編集画面以外の場合はスキップ
+    if (screenMode !== 'edit') {
+      return;
+    }
+    
+    // 既にscoreが設定されている場合はスキップ（新規作成やSupabaseから読み込んだ場合）
+    if (score) {
+      return;
+    }
+    
+    // propsで直接譜面データが指定されている場合はそれを使用
+    if (effectiveScoreFromProps) {
+      setScore(effectiveScoreFromProps);
+      return;
+    }
+    
+    // 編集画面では、Supabaseから読み込んだデータのみを使用
+    // ローカルファイルからの読み込みは行わない（全てSupabaseで管理）
+    // scoreFileからの読み込みは行わない
+  }, [scoreFile, effectiveScoreFromProps, screenMode, score, isRenderingMode]);
   
   // 一番近いノーツを常に取得
   // showPassedNotesがtrueの場合は判定枠を過ぎたノーツも含める
@@ -286,35 +550,58 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     setIsUploading(true);
     
     try {
-      // ① DBに先にレコードを作る（重要）
-      const { data: video, error: insertError } = await supabase
+      // ① 既存レコードを検索（同じ名前のプロジェクトがあるか確認）
+      const { data: existingVideo, error: searchError } = await supabase
         .from('videos')
-        .insert({
-          name: videoName,
-          video_path: 'temp',
-          json_path: 'temp',
-        })
-        .select()
-        .single();
+        .select('id, video_path, json_path')
+        .eq('name', videoName)
+        .maybeSingle(); // maybeSingle(): 0件の場合はnull、1件の場合はそのレコード、2件以上の場合はエラー
       
-      if (insertError) {
-        throw new Error(`DBレコード作成エラー: ${insertError.message}`);
+      if (searchError && searchError.code !== 'PGRST116') { // PGRST116は「0件」のエラーコード
+        throw new Error(`既存レコード検索エラー: ${searchError.message}`);
       }
       
-      if (!video || !video.id) {
-        throw new Error('video.idが取得できませんでした');
+      let videoId: string;
+      let isUpdate = false;
+      
+      if (existingVideo && existingVideo.id) {
+        // 既存レコードがある場合：上書き保存
+        videoId = existingVideo.id;
+        isUpdate = true;
+      } else {
+        // 既存レコードがない場合：新規作成
+        const { data: newVideo, error: insertError } = await supabase
+          .from('videos')
+          .insert({
+            name: videoName,
+            video_path: 'temp',
+            json_path: 'temp',
+          })
+          .select()
+          .single();
+        
+        if (insertError) {
+          throw new Error(`DBレコード作成エラー: ${insertError.message}`);
+        }
+        
+        if (!newVideo || !newVideo.id) {
+          throw new Error('video.idが取得できませんでした');
+        }
+        
+        videoId = newVideo.id;
       }
       
-      // ② Storageにアップロード
-      const videoPath = `videos/${video.id}.mp4`;
-      const jsonPath = `metadata/${video.id}.json`;
+      // ② Storageにアップロード（upsert: trueで上書き可能に）
+      const videoPath = `videos/${videoId}.mp4`;
+      const jsonPath = `metadata/${videoId}.json`;
       
       // 動画ファイルをアップロード
+      // upsert: true → 同じパスのファイルが既に存在する場合は上書き、存在しない場合は新規作成
       const { error: videoUploadError } = await supabase.storage
         .from('assets')
         .upload(videoPath, videoFile, {
           cacheControl: '3600',
-          upsert: false
+          upsert: true // 上書きを許可
         });
       
       if (videoUploadError) {
@@ -326,11 +613,12 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
         type: 'application/json',
       });
       
+      // upsert: true → 同じパスのファイルが既に存在する場合は上書き、存在しない場合は新規作成
       const { error: jsonUploadError } = await supabase.storage
         .from('assets')
         .upload(jsonPath, jsonBlob, {
           cacheControl: '3600',
-          upsert: false
+          upsert: true // 上書きを許可
         });
       
       if (jsonUploadError) {
@@ -344,13 +632,17 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
           video_path: videoPath,
           json_path: jsonPath,
         })
-        .eq('id', video.id);
+        .eq('id', videoId);
       
       if (updateError) {
         throw new Error(`DB更新エラー: ${updateError.message}`);
       }
       
-      alert(`アップロード成功！\n動画ID: ${video.id}\n動画パス: ${videoPath}\nJSONパス: ${jsonPath}`);
+      const message = isUpdate 
+        ? `上書き保存成功！\n動画ID: ${videoId}\n動画パス: ${videoPath}\nJSONパス: ${jsonPath}`
+        : `アップロード成功！\n動画ID: ${videoId}\n動画パス: ${videoPath}\nJSONパス: ${jsonPath}`;
+      
+      alert(message);
     } catch (error) {
       console.error('アップロードエラー:', error);
       alert(`アップロードエラー: ${error instanceof Error ? error.message : '不明なエラー'}`);
@@ -379,8 +671,8 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       const videoFileName = score.videoPath || 'video.mp4';
       const videoFile = new File([videoBlob], videoFileName, { type: videoBlob.type || 'video/mp4' });
       
-      // 動画名をscore.videoPathから取得（拡張子を除く）
-      const videoName = videoFileName.replace(/\.[^/.]+$/, '') || '動画';
+      // プロジェクト名を取得（score.nameがあればそれを使用、なければ動画ファイル名から取得）
+      const videoName = score.name || videoFileName.replace(/\.[^/.]+$/, '') || '動画';
       
       await uploadToSupabase(videoFile, videoName);
     } catch (error) {
@@ -472,8 +764,314 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     frame >= judgeLineEffectFrame && 
     (frame - judgeLineEffectFrame) < 10;
   
-  // 譜面データが読み込まれるまで待つ
-  if (!score) {
+  
+  // レンダリング時は、screenModeに関係なく編集画面を表示
+  // トップページ（レンダリング時は表示しない）
+  // レンダリング時（isRenderingMode）の場合は、screenModeに関係なく編集画面を表示
+  // レンダリング時は、ホーム画面を表示しない（編集画面を表示する）
+  // 「動画の出力準備」ボタンが押された時も、edit画面に強制切り替えされるため、home画面は表示されない
+  if (!isRenderingMode && screenMode === 'home' && !score && !effectiveScoreFromProps) {
+    // レンダリング時は、このreturn文を実行しない（編集画面を表示する）
+    // isRenderingModeがtrueの場合は、この条件ブロックをスキップする
+    return (
+      <AbsoluteFill
+        style={{
+          backgroundColor: "#1a1a2e",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          color: "white",
+          gap: "40px",
+        }}
+      >
+        <h1 style={{ fontSize: "72px", marginBottom: "30px", fontWeight: "bold" }}>
+          太鼓練習動画エディタ
+        </h1>
+        <div style={{ display: "flex", flexDirection: "column", gap: "36px", minWidth: "600px" }}>
+          <button
+            onClick={() => setScreenMode('new')}
+            style={{
+              padding: "30px 60px",
+              backgroundColor: "#8b5cf6",
+              color: "white",
+              border: "none",
+              borderRadius: "16px",
+              cursor: "pointer",
+              fontSize: "36px",
+              fontWeight: "600",
+              transition: "background-color 0.2s",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = "#7c3aed";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "#8b5cf6";
+            }}
+          >
+            新規制作
+          </button>
+          <button
+            onClick={() => {
+              setScreenMode('select');
+              loadVideoList();
+            }}
+            style={{
+              padding: "30px 60px",
+              backgroundColor: "#06b6d4",
+              color: "white",
+              border: "none",
+              borderRadius: "16px",
+              cursor: "pointer",
+              fontSize: "36px",
+              fontWeight: "600",
+              transition: "background-color 0.2s",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = "#0891b2";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "#06b6d4";
+            }}
+          >
+            既存の編集
+          </button>
+        </div>
+      </AbsoluteFill>
+    );
+  }
+  
+  // 新規制作ページ（レンダリング時は表示しない）
+  // レンダリング時は、新規制作画面を表示しない（編集画面を表示する）
+  // 「動画の出力準備」ボタンが押された時も、edit画面に強制切り替えされるため、new画面は表示されない
+  if (!isRenderingMode && screenMode === 'new' && !score && !effectiveScoreFromProps) {
+    return (
+      <AbsoluteFill
+        style={{
+          backgroundColor: "#1a1a2e",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          color: "white",
+          gap: "30px",
+          padding: "40px",
+        }}
+      >
+        <h2 style={{ fontSize: "54px", marginBottom: "30px", fontWeight: "bold" }}>
+          新規プロジェクト作成
+        </h2>
+        <div style={{ display: "flex", flexDirection: "column", gap: "36px", minWidth: "700px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <label style={{ fontSize: "28px", fontWeight: "500" }}>
+              プロジェクト名
+            </label>
+            <input
+              type="text"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              placeholder="プロジェクト名を入力"
+              style={{
+                padding: "18px 24px",
+                fontSize: "24px",
+                borderRadius: "12px",
+                border: "3px solid #3b82f6",
+                backgroundColor: "#0f172a",
+                color: "white",
+              }}
+            />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <label style={{ fontSize: "28px", fontWeight: "500" }}>
+              動画ファイル
+            </label>
+            <input
+              type="file"
+              accept="video/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  setSelectedVideoFile(file);
+                }
+              }}
+              style={{
+                padding: "18px 24px",
+                fontSize: "24px",
+                borderRadius: "12px",
+                border: "3px solid #3b82f6",
+                backgroundColor: "#0f172a",
+                color: "white",
+              }}
+            />
+            {selectedVideoFile && (
+              <div style={{ fontSize: "20px", color: "#94a3b8", marginTop: "8px" }}>
+                選択済み: {selectedVideoFile.name}
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: "24px", marginTop: "30px" }}>
+            <button
+              onClick={() => {
+                setScreenMode('home');
+                setProjectName('');
+                setSelectedVideoFile(null);
+              }}
+              style={{
+                padding: "20px 40px",
+                backgroundColor: "#6b7280",
+                color: "white",
+                border: "none",
+                borderRadius: "12px",
+                cursor: "pointer",
+                fontSize: "24px",
+                fontWeight: "500",
+                flex: 1,
+              }}
+            >
+              キャンセル
+            </button>
+            <button
+              onClick={initializeNewProject}
+              disabled={!projectName.trim() || !selectedVideoFile}
+              style={{
+                padding: "20px 40px",
+                backgroundColor: (!projectName.trim() || !selectedVideoFile) ? "#666" : "#8b5cf6",
+                color: "white",
+                border: "none",
+                borderRadius: "12px",
+                cursor: (!projectName.trim() || !selectedVideoFile) ? "not-allowed" : "pointer",
+                fontSize: "24px",
+                fontWeight: "500",
+                flex: 1,
+              }}
+            >
+              作成して編集開始
+            </button>
+          </div>
+        </div>
+      </AbsoluteFill>
+    );
+  }
+  
+  // 既存プロジェクト選択ページ（レンダリング時は表示しない）
+  // レンダリング時は、既存プロジェクト選択画面を表示しない（編集画面を表示する）
+  // 「動画の出力準備」ボタンが押された時も、edit画面に強制切り替えされるため、select画面は表示されない
+  if (!isRenderingMode && screenMode === 'select' && !score && !effectiveScoreFromProps) {
+    return (
+      <AbsoluteFill
+        style={{
+          backgroundColor: "#1a1a2e",
+          display: "flex",
+          flexDirection: "column",
+          color: "white",
+          padding: "40px",
+        }}
+      >
+        <div style={{ marginBottom: "40px" }}>
+          <button
+            onClick={() => setScreenMode('home')}
+            style={{
+              padding: "16px 32px",
+              backgroundColor: "#6b7280",
+              color: "white",
+              border: "none",
+              borderRadius: "12px",
+              cursor: "pointer",
+              fontSize: "24px",
+              marginBottom: "30px",
+            }}
+          >
+            ← 戻る
+          </button>
+          <h2 style={{ fontSize: "54px", fontWeight: "bold" }}>
+            既存プロジェクトを選択
+          </h2>
+        </div>
+        {isLoadingVideos ? (
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flex: 1 }}>
+            <div style={{ fontSize: "36px" }}>読み込み中...</div>
+          </div>
+        ) : videoList.length === 0 ? (
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", flex: 1 }}>
+            <div style={{ fontSize: "36px", color: "#94a3b8" }}>
+              保存されているプロジェクトがありません
+            </div>
+          </div>
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(400px, 1fr))",
+              gap: "30px",
+              overflowY: "auto",
+              padding: "30px 0",
+            }}
+          >
+            {videoList.map((video) => (
+              <div
+                key={video.id}
+                onClick={() => loadProjectFromSupabase(video)}
+                style={{
+                  padding: "36px",
+                  backgroundColor: "#0f172a",
+                  borderRadius: "16px",
+                  border: "3px solid #3b82f6",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "#1e293b";
+                  e.currentTarget.style.borderColor = "#60a5fa";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "#0f172a";
+                  e.currentTarget.style.borderColor = "#3b82f6";
+                }}
+              >
+                <div style={{ fontSize: "32px", fontWeight: "600", marginBottom: "12px" }}>
+                  {video.name}
+                </div>
+                <div style={{ fontSize: "22px", color: "#94a3b8", marginBottom: "8px" }}>
+                  ID: {video.id}
+                </div>
+                {video.created_at && (
+                  <div style={{ fontSize: "18px", color: "#64748b" }}>
+                    {new Date(video.created_at).toLocaleString('ja-JP')}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </AbsoluteFill>
+    );
+  }
+  
+  // 譜面データが読み込まれるまで待つ（編集画面）
+  // レンダリング時は、effectiveScoreFromPropsが読み込まれるまで待つ（Supabaseから読み込まれたデータ）
+  // ローカルファイルからの読み込みは行わない（全てSupabaseで管理）
+  if (!score && (isRenderingMode || effectiveScoreFromProps)) {
+    // レンダリング時は、scoreが読み込まれるまで編集画面のレイアウトを維持
+    // （空の状態でも編集画面の構造を表示）
+    return (
+      <AbsoluteFill
+        style={{
+          backgroundColor: "#1a1a2e",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          color: "white",
+          fontSize: 24,
+        }}
+      >
+        譜面データを読み込み中...
+      </AbsoluteFill>
+    );
+  }
+  
+  // レンダリング時以外でscoreが存在しない場合は、トップページに戻る
+  // レンダリング時は、scoreがなくても編集画面を表示する（譜面データを読み込み中...が表示される）
+  if (!score && !isRenderingMode && !effectiveScoreFromProps) {
     return (
       <AbsoluteFill
         style={{
@@ -529,6 +1127,12 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     return startX + (endX - startX) * progress;
   };
 
+  // レンダリング時は、screenModeに関係なく編集画面を表示
+  // レンダリング時でscoreが読み込まれていない場合でも、編集画面の構造を維持
+  // レンダリング時は、必ず編集画面を表示する（他の画面を表示しない）
+  // レンダリング時は、ホーム画面、新規作成画面、既存プロジェクト選択画面の条件チェックをスキップする
+  // （上記の条件チェックで既にスキップされているが、念のため明示的に確認）
+  
   return (
     <AbsoluteFill
       style={{
@@ -538,20 +1142,21 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       }}
     >
       {/* キー操作ガイド（左上） */}
-      <div
-        style={{
-          position: "absolute",
-          top: 20,
-          left: 20,
-          backgroundColor: "rgba(0, 0, 0, 0.8)",
-          padding: "24px",
-          borderRadius: "12px",
-          color: "white",
-          fontSize: "18px",
-          zIndex: 999,
-          boxShadow: "0 2px 10px rgba(0, 0, 0, 0.5)",
-        }}
-      >
+      {!hideUI && (
+        <div
+          style={{
+            position: "absolute",
+            top: 20,
+            left: 20,
+            backgroundColor: "rgba(0, 0, 0, 0.8)",
+            padding: "24px",
+            borderRadius: "12px",
+            color: "white",
+            fontSize: "18px",
+            zIndex: 999,
+            boxShadow: "0 2px 10px rgba(0, 0, 0, 0.5)",
+          }}
+        >
         <div style={{ fontWeight: "bold", marginBottom: "16px", fontSize: "22px" }}>
           キー操作
         </div>
@@ -592,7 +1197,8 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
             />
           </div>
         </div>
-      </div>
+        </div>
+      )}
       
       {/* 上部：元動画エリア */}
       <div
@@ -606,15 +1212,26 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
           position: "relative",
         }}
       >
-        <OffthreadVideo
-          src={videoSrc}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "contain",
-          }}
-          startFrom={0}
-        />
+        {videoSrc ? (
+          <OffthreadVideo
+            src={videoSrc}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+            }}
+            startFrom={0}
+            volume={1}
+            muted={false}
+            onError={(error) => {
+              console.error('[Video Debug] OffthreadVideo error:', error);
+            }}
+          />
+        ) : (
+          <div style={{ color: "white", fontSize: 24 }}>
+            動画を読み込み中...
+          </div>
+        )}
       </div>
 
       {/* 下部：ノーツUI */}
@@ -657,7 +1274,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
       </div>
       
       {/* 編集UI（Remotion Studio環境でのみ表示） */}
-      {typeof window !== "undefined" && (
+      {typeof window !== "undefined" && !hideUI && (
         <div
           style={{
             position: "absolute",
@@ -1023,6 +1640,104 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
               <div style={{ opacity: 0.7 }}>近くにノーツがありません</div>
             </div>
           )}
+          
+          {/* 動画の出力準備ボタン */}
+          <button
+            onClick={async () => {
+              if (!score) {
+                alert('譜面データがありません');
+                return;
+              }
+              
+              setIsRendering(true);
+              
+              // 動画出力用の設定
+              setShowPassedNotes(false); // 通過ノーツ表示をOFF
+              setShowSelectedNoteAnimation(false); // 選択ノーツ表示を無効化
+              setHideUI(true); // UIを非表示にする
+              setScreenMode('edit'); // edit画面に強制切り替え（home, new, selectを非表示にする）
+              
+              // 1. 現在編集中のscoreをlocalStorageに保存（レンダリング時にpropsとして使用）
+              try {
+                if (typeof window !== "undefined") {
+                  localStorage.setItem('taiko-practice-render-score', JSON.stringify(score));
+                  console.log('[Render Prep] scoreをlocalStorageに保存しました:', score);
+                }
+              } catch (error) {
+                console.error('[Render Prep] localStorageへの保存エラー:', error);
+              }
+              
+              try {
+                // Remotion StudioのAPIを使用してレンダリングを開始
+                if (typeof window !== "undefined") {
+                  // Remotion StudioのAPIを動的にインポート
+                  const studioModule = await import("@remotion/studio");
+                  
+                  // Studioの内部APIを使用してレンダリングを開始
+                  // Remotion Studioでは、windowオブジェクト経由でStudioにアクセスできます
+                  if (studioModule && (studioModule as any).openRenderModal) {
+                    // openRenderModal関数が存在する場合
+                    (studioModule as any).openRenderModal('TaikoPractice');
+                    alert('レンダリング画面を開きました。');
+                  } else if ((window as any).remotionStudio) {
+                    // StudioのAPIが利用可能な場合
+                    const studio = (window as any).remotionStudio;
+                    if (studio.openRenderModal) {
+                      studio.openRenderModal('TaikoPractice');
+                      alert('レンダリング画面を開きました。');
+                    } else {
+                      // フォールバック: レンダリングUIを開くためにURLパラメータを使用
+                      const currentUrl = new URL(window.location.href);
+                      // Remotion StudioのレンダリングUIは通常、/#/render パスを使用
+                      window.location.hash = '#/render';
+                      alert('レンダリング画面を開きました。\n\nComposition: TaikoPractice を選択してレンダリングを開始してください。');
+                    }
+                  } else {
+                    // StudioのAPIが利用できない場合、URLハッシュを使用してレンダリングUIを開く
+                    window.location.hash = '#/render';
+                    alert('レンダリング画面を開きました。\n\nComposition: TaikoPractice を選択してレンダリングを開始してください。');
+                  }
+                } else {
+                  alert('Remotion Studio環境で実行してください。');
+                }
+              } catch (error) {
+                console.error('レンダリング開始エラー:', error);
+                // エラーが発生した場合でも、レンダリングUIを開く
+                if (typeof window !== "undefined") {
+                  window.location.hash = '#/render';
+                  alert('レンダリング画面を開きました。\n\nComposition: TaikoPractice を選択してレンダリングを開始してください。');
+                }
+              } finally {
+                setIsRendering(false);
+              }
+            }}
+            disabled={!score || isRendering}
+            style={{
+              marginTop: "20px",
+              padding: "14px",
+              backgroundColor: (!score || isRendering) ? "#666" : "#8b5cf6",
+              color: "white",
+              border: "none",
+              borderRadius: "6px",
+              cursor: (!score || isRendering) ? "not-allowed" : "pointer",
+              fontSize: "16px",
+              fontWeight: "500",
+              transition: "background-color 0.2s",
+              width: "100%",
+            }}
+            onMouseEnter={(e) => {
+              if (score && !isRendering) {
+                e.currentTarget.style.backgroundColor = "#7c3aed";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (score && !isRendering) {
+                e.currentTarget.style.backgroundColor = "#8b5cf6";
+              }
+            }}
+          >
+            {isRendering ? "レンダリング中..." : "動画の出力準備"}
+          </button>
         </div>
       )}
     </AbsoluteFill>

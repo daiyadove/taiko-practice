@@ -43,8 +43,16 @@ export interface Note {
  * 譜面データ全体
  */
 export interface Score {
+  /** プロジェクト名（オプション） */
+  name?: string;
   /** 元動画のパス */
   videoPath: string;
+  /** SupabaseのプロジェクトID（レンダリング時に動画と譜面データを読み込むために使用） */
+  supabaseProjectId?: string;
+  /** Supabase Storageの動画パス（レンダリング時に使用） */
+  supabaseVideoPath?: string;
+  /** Supabase StorageのJSONパス（レンダリング時に使用） */
+  supabaseJsonPath?: string;
   /** 動画の長さ（秒） */
   duration: number;
   /** フレームレート */

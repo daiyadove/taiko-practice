@@ -15,7 +15,11 @@ const noteSchema = z.object({
 
 // 譜面データのスキーマ定義
 const scoreSchema = z.object({
+  name: z.string().optional().describe("プロジェクト名（オプション）"),
   videoPath: z.string().describe("元動画のパス"),
+  supabaseProjectId: z.string().optional().describe("SupabaseのプロジェクトID（レンダリング時に動画と譜面データを読み込むために使用）"),
+  supabaseVideoPath: z.string().optional().describe("Supabase Storageの動画パス（レンダリング時に使用）"),
+  supabaseJsonPath: z.string().optional().describe("Supabase StorageのJSONパス（レンダリング時に使用）"),
   duration: z.number().describe("動画の長さ（秒）"),
   fps: z.number().describe("フレームレート"),
   notes: z.array(noteSchema).describe("ノーツのリスト"),
