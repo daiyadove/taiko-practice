@@ -1,0 +1,6 @@
+{
+  "videos": [
+    "videos/test.mp4"
+  ],
+  "defaultVideo": "videos/test.mp4"
+}

@@ -18,6 +18,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import ffmpeg
@@ -77,7 +78,7 @@ def get_video_info(video_path: str) -> dict:
     }
 
 
-def extract_frame(video_path: str, time_sec: float) -> np.ndarray | None:
+def extract_frame(video_path: str, time_sec: float) -> Optional[np.ndarray]:
     """指定時刻のフレーム画像を抽出"""
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -90,7 +91,7 @@ def extract_frame(video_path: str, time_sec: float) -> np.ndarray | None:
     return frame if ret else None
 
 
-def determine_hand(frame: np.ndarray | None) -> str:
+def determine_hand(frame: Optional[np.ndarray]) -> str:
     """
     フレーム画像から左手/右手を判別
 

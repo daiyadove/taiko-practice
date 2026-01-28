@@ -4,6 +4,8 @@
   "description": "太鼓練習のための太鼓の達人っぽい動画を作るツール",
   "main": "index.js",
   "scripts": {
+    "list-videos": "node scripts/list-videos.js",
+    "prestart": "npm run list-videos",
     "start": "remotion studio",
     "build": "remotion render TaikoPractice out/video.mp4",
     "preview": "remotion preview"
@@ -19,6 +21,7 @@
     "@remotion/cli": "^4.0.407",
     "@remotion/player": "^4.0.407",
     "@remotion/renderer": "^4.0.407",
+    "@remotion/zod-types": "4.0.407",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/react": "^19.2.9",
     "@types/react-dom": "^19.2.3",
@@ -26,6 +29,10 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "remotion": "^4.0.407",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "3.22.3"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.1"
   }
 }
