@@ -20,41 +20,60 @@ export const RemotionRoot: React.FC = () => {
         width={1920}
         height={1080}
         schema={taikoPracticeSchema}
-        defaultProps={{
-          score: {
-            name: "",
-            videoPath: "",
-            supabaseProjectId: "",
-            supabaseVideoPath: "",
-            supabaseJsonPath: "",
-            duration: 0,
-            fps: 0,
-            notes: [{ time: 0, frame: 0, imageFile: "big.png" as const }],
-          },
-          scoreFile: "",
-        }}
+        defaultProps={{ scoreFile: "" }}
         calculateMetadata={async (props: TaikoPracticeProps) => {
+          console.log(
+            "[Root calculateMetadata] TaikoPractice - 受け取ったprops:",
+            {
+              hasScore: !!props.score,
+              scoreDuration: props.score?.duration,
+              scoreFps: props.score?.fps,
+              hasWindowScore:
+                typeof window !== "undefined" &&
+                !!(window as any).__TAIKO_PRACTICE_SCORE__,
+            }
+          );
+
           // propsからscoreを取得
           let score: Score | null = null;
 
           if (props.score) {
             score = props.score;
+            console.log("[Root calculateMetadata] props.scoreを使用:", {
+              duration: score.duration,
+              fps: score.fps,
+            });
           } else if (
             typeof window !== "undefined" &&
             (window as any).__TAIKO_PRACTICE_SCORE__
           ) {
             score = (window as any).__TAIKO_PRACTICE_SCORE__;
+            console.log(
+              "[Root calculateMetadata] window.__TAIKO_PRACTICE_SCORE__を使用:",
+              {
+                duration: score.duration,
+                fps: score.fps,
+              }
+            );
           }
 
           // scoreにdurationとfpsが含まれている場合はそれを使用
           if (score && score.duration && score.fps) {
             const durationInFrames = Math.ceil(score.duration * score.fps);
+            console.log("[Root calculateMetadata] durationInFramesを計算:", {
+              duration: score.duration,
+              fps: score.fps,
+              durationInFrames,
+            });
             return {
               durationInFrames,
             };
           }
 
           // デフォルト値を返す
+          console.log(
+            "[Root calculateMetadata] デフォルト値900フレームを返します"
+          );
           return {
             durationInFrames: 900,
           };
