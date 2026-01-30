@@ -29,6 +29,7 @@ const scoreSchema = z.object({
 export const taikoPracticeSchema = z.object({
   scoreFile: z.string().optional().describe("譜面データファイル名（publicフォルダ内）"),
   score: scoreSchema.optional().describe("譜面データ（直接指定する場合）"),
+  videoUrl: z.string().url().optional().describe("Supabase Storageの動画URL（score変更時に自動生成される）"),
 });
 
 export type TaikoPracticeProps = z.infer<typeof taikoPracticeSchema>;

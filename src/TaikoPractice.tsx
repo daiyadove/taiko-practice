@@ -1,11 +1,11 @@
-import { AbsoluteFill, useCurrentFrame, useVideoConfig, OffthreadVideo, staticFile, Img } from "remotion";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig, OffthreadVideo, staticFile, Img, delayRender, continueRender } from "remotion";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Note } from "./components/Note";
 import { JudgeLine } from "./components/JudgeLine";
 import type { Score, Note as NoteType, NoteImageFile } from "./types/score";
 import { getHandFromImageFile } from "./types/score";
 import type { TaikoPracticeProps } from "./schema";
-import { supabase } from "./lib/supabase";
+import { supabase, getSupabasePublicUrl } from "./lib/supabase";
 import { getVideoMetadata } from "@remotion/media-utils";
 
 // 画面モードの型定義
@@ -38,7 +38,7 @@ const seekToFrame = (frame: number) => {
 };
 
 
-export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromProps }) => {
+export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromProps, videoUrl: videoUrlFromProps }) => {
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
   
@@ -46,7 +46,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
   // 画面モード管理（編集専用なので常にブラウザ環境）
   const [screenMode, setScreenMode] = useState<ScreenMode>('home');
   
-  // 動画ファイルのパス（Blob URLのみ、Supabaseから読み込む）
+  // 動画ファイルのパス（Blob URLまたはSupabase URL）
   const [videoSrc, setVideoSrc] = useState<string>("");
   const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null); // Blob URLを保持
   
@@ -76,26 +76,225 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
   const [videoList, setVideoList] = useState<VideoInfo[]>([]);
   const [isLoadingVideos, setIsLoadingVideos] = useState<boolean>(false);
   
+  // delayRenderのハンドルを保持（動画の読み込み完了までレンダリングを待機）
+  const renderHandleRef = useRef<number | null>(null);
+  const fallbackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // コンポーネントマウント時にdelayRenderを呼び出す（動画が読み込まれるまでレンダリングを待機）
+  useEffect(() => {
+    // delayRenderを呼び出す（レンダリング時とStudio環境の両方で動作）
+    // 動画が既に読み込まれている場合は、すぐにcontinueRenderが呼ばれる
+    if (renderHandleRef.current === null) {
+      renderHandleRef.current = delayRender();
+      console.log('[TaikoPractice] delayRenderを呼び出しました（レンダリング開始を待機）');
+    }
+    
+    // フォールバック: videoSrcが設定されない場合でも、一定時間後にcontinueRenderを呼ぶ
+    // これにより、レンダリングが確実に開始される
+    // Studio環境でも動画の読み込みを待つため、時間を延長
+    const isRendering = typeof window === "undefined" || !window.location?.href.includes('localhost');
+    const fallbackDelayMs = isRendering ? 20000 : 10000; // レンダリング時は20秒、Studio環境は10秒
+    
+    // 既存のフォールバックタイムアウトをクリア
+    if (fallbackTimeoutRef.current) {
+      clearTimeout(fallbackTimeoutRef.current);
+    }
+    
+    fallbackTimeoutRef.current = setTimeout(() => {
+      if (renderHandleRef.current !== null) {
+        console.warn(`[TaikoPractice] フォールバック: ${fallbackDelayMs / 1000}秒経過したため、continueRenderを呼び出して続行します (videoSrc: ${videoSrc ? '設定済み' : '未設定'})`);
+        continueRender(renderHandleRef.current);
+        renderHandleRef.current = null;
+        fallbackTimeoutRef.current = null;
+      }
+    }, fallbackDelayMs);
+    
+    return () => {
+      if (fallbackTimeoutRef.current) {
+        clearTimeout(fallbackTimeoutRef.current);
+        fallbackTimeoutRef.current = null;
+      }
+      // クリーンアップ時にcontinueRenderが呼ばれていない場合は呼び出す
+      // ただし、videoSrcが設定されている場合は、動画の読み込み完了を待つuseEffectで処理されるため、ここでは呼ばない
+    };
+  }, []); // マウント時のみ実行（videoSrcが設定されたら、動画の読み込み完了を待つuseEffectで処理される）
+  
+  // videoSrcが設定されたら、フォールバックタイムアウトをキャンセル
+  useEffect(() => {
+    if (videoSrc && fallbackTimeoutRef.current) {
+      console.log('[TaikoPractice] videoSrcが設定されたため、フォールバックタイムアウトをキャンセルします');
+      clearTimeout(fallbackTimeoutRef.current);
+      fallbackTimeoutRef.current = null;
+    }
+  }, [videoSrc]);
+  
+  // PropsからvideoUrlが渡された場合、videoSrcに設定する
+  useEffect(() => {
+    if (videoUrlFromProps) {
+      if (!videoSrc || videoSrc !== videoUrlFromProps) {
+        console.log('[TaikoPractice] PropsからvideoUrlが渡されました。videoSrcに設定します:', videoUrlFromProps.substring(0, 50) + '...');
+        setVideoSrc(videoUrlFromProps);
+      }
+    }
+  }, [videoUrlFromProps, videoSrc]);
+  
+  // scoreFromPropsからsupabaseVideoPathがある場合、videoUrlを生成してvideoSrcに設定する
+  useEffect(() => {
+    if (scoreFromProps?.supabaseVideoPath && !videoSrc && !videoUrlFromProps) {
+      const generatedVideoUrl = getSupabasePublicUrl(scoreFromProps.supabaseVideoPath);
+      console.log('[TaikoPractice] scoreFromPropsからsupabaseVideoPathを検出しました。videoSrcに設定します:', generatedVideoUrl.substring(0, 50) + '...');
+      setVideoSrc(generatedVideoUrl);
+    }
+  }, [scoreFromProps, videoSrc, videoUrlFromProps]);
+  
   // scoreが変更されたときにrefを更新
   useEffect(() => {
     scoreRef.current = score;
   }, [score]);
   
+  // 動画の読み込み完了を待ってcontinueRenderを呼び出す
+  useEffect(() => {
+    if (!videoSrc || renderHandleRef.current === null) {
+      return;
+    }
+    
+    let hasCalledContinueRender = false;
+    
+    const callContinueRender = () => {
+      if (!hasCalledContinueRender && renderHandleRef.current !== null) {
+        hasCalledContinueRender = true;
+        continueRender(renderHandleRef.current);
+        renderHandleRef.current = null;
+      }
+    };
+    
+    // 動画要素を作成して読み込み完了を待つ
+    const video = document.createElement('video');
+    video.src = videoSrc;
+    video.preload = 'auto';
+    video.crossOrigin = 'anonymous'; // CORSエラーを防ぐ
+    
+    const onCanPlayThrough = () => {
+      cleanup();
+      console.log('[TaikoPractice] 動画の読み込みが完了しました（canplaythrough）。continueRenderを呼び出します');
+      callContinueRender();
+    };
+    
+    const onLoadedData = () => {
+      // HAVE_ENOUGH_DATA (4) = 十分なデータが読み込まれている
+      if (video.readyState >= 4) {
+        cleanup();
+        console.log('[TaikoPractice] 動画の読み込みが完了しました（loadeddata, readyState:', video.readyState, '）。continueRenderを呼び出します');
+        callContinueRender();
+      }
+    };
+    
+    const onError = (e: Event) => {
+      cleanup();
+      console.warn('[TaikoPractice] 動画の読み込みエラー、continueRenderを呼び出して続行します', e);
+      // エラーでもcontinueRenderを呼ぶ（OffthreadVideoが後でリトライする可能性がある）
+      callContinueRender();
+    };
+    
+    const cleanup = () => {
+      video.removeEventListener('canplaythrough', onCanPlayThrough);
+      video.removeEventListener('loadeddata', onLoadedData);
+      video.removeEventListener('error', onError);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      if (video.parentNode) {
+        video.parentNode.removeChild(video);
+      }
+    };
+    
+    let timeoutId: NodeJS.Timeout | null = null;
+    
+    // 既に読み込まれている可能性をチェック（イベントリスナーを追加する前に）
+    // ただし、video要素をDOMに追加してからチェックする必要がある
+    const checkReadyState = () => {
+      if (video.readyState >= 4) {
+        cleanup();
+        console.log('[TaikoPractice] 動画は既に完全に読み込まれています（readyState:', video.readyState, '）。continueRenderを呼び出します');
+        callContinueRender();
+        return true;
+      }
+      return false;
+    };
+    
+    video.style.display = 'none';
+    if (typeof document !== "undefined" && document.body) {
+      document.body.appendChild(video);
+      // DOMに追加した後、すぐにreadyStateをチェック
+      if (checkReadyState()) {
+        return cleanup;
+      }
+    }
+    
+    video.addEventListener('canplaythrough', onCanPlayThrough, { once: true });
+    video.addEventListener('loadeddata', onLoadedData);
+    video.addEventListener('error', onError, { once: true });
+    
+    // タイムアウト（レンダリング時は長めに、Studio環境は短めに）
+    const isRendering = typeof window === "undefined" || !window.location?.href.includes('localhost');
+    const timeoutDelay = isRendering ? 20000 : 10000; // レンダリング時は20秒、Studio環境は10秒
+    
+    timeoutId = setTimeout(() => {
+      cleanup();
+      console.warn(`[TaikoPractice] 動画の読み込みタイムアウト（${timeoutDelay}秒）、continueRenderを呼び出して続行します (readyState: ${video.readyState})`);
+      // タイムアウトでもcontinueRenderを呼ぶ（OffthreadVideoが後で読み込む）
+      callContinueRender();
+    }, timeoutDelay);
+    
+    return cleanup;
+  }, [videoSrc]);
+  
   // scoreが変更されたときに、Remotion StudioのComposition propsとメタデータを更新
+  // 動画の読み込みが完了してから更新する（videoSrcが設定されていることを確認）
   useEffect(() => {
     if (!score || !score.duration || !score.fps) {
       console.log('[TaikoPractice] scoreが無効なため、メタデータ更新をスキップ:', { score });
       return;
     }
     
-    console.log('[TaikoPractice] scoreが変更されました。メタデータを更新します:', {
+    // 動画の読み込みが完了していない場合は待つ
+    // videoSrcが設定されていない場合は、動画の読み込み完了を待つ
+    if (!videoSrc) {
+      console.log('[TaikoPractice] 動画の読み込みが完了していないため、Props更新を待機します');
+      return;
+    }
+    
+    // Supabase URLを生成（supabaseVideoPathが存在する場合）
+    let videoUrl: string | undefined = undefined;
+    if (score.supabaseVideoPath) {
+      videoUrl = getSupabasePublicUrl(score.supabaseVideoPath);
+      console.log('[TaikoPractice] Supabase URLを生成しました:', {
+        supabaseVideoPath: score.supabaseVideoPath,
+        videoUrl: videoUrl,
+      });
+    }
+    
+    console.log('[TaikoPractice] scoreが変更されました。メタデータを更新します（動画読み込み完了後）:', {
       duration: score.duration,
       fps: score.fps,
       durationInFrames: Math.ceil(score.duration * score.fps),
+      hasVideoUrl: !!videoUrl,
+      videoUrl: videoUrl ? `${videoUrl.substring(0, 50)}...` : undefined,
+      videoSrc: videoSrc ? `${videoSrc.substring(0, 30)}...` : undefined,
     });
     
     // Remotion StudioのAPIを使用してCompositionのpropsとメタデータを更新
+    // レンダリング時（CLI環境）では実行しない（updateDefaultPropsはStudio環境でのみ使用可能）
     if (typeof window !== "undefined") {
+      // Remotion Studio環境かどうかをチェック（レンダリング時はスキップ）
+      const isRemotionStudio = typeof (window as any).remotionStudio !== 'undefined' || 
+                              (window.location && window.location.href.includes('localhost'));
+      
+      if (!isRemotionStudio) {
+        console.log('[TaikoPractice] レンダリング環境のため、updateDefaultPropsをスキップします');
+        return;
+      }
+      
       import("@remotion/studio")
         .then((studioModule) => {
           console.log('[TaikoPractice] @remotion/studioモジュールを読み込みました:', {
@@ -113,6 +312,8 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
                     ...unsavedDefaultProps,
                     ...savedDefaultProps,
                     score: score,
+                    // videoUrlをPropsのトップレベルに追加
+                    ...(videoUrl && { videoUrl }),
                   };
                   console.log('[TaikoPractice] updateDefaultPropsを呼び出します:', {
                     compositionId: 'TaikoPractice',
@@ -120,6 +321,8 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
                       duration: newProps.score?.duration,
                       fps: newProps.score?.fps,
                     },
+                    hasVideoUrl: !!newProps.videoUrl,
+                    videoUrl: newProps.videoUrl ? `${newProps.videoUrl.substring(0, 50)}...` : undefined,
                   });
                   return newProps;
                 },
@@ -139,7 +342,12 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
                   console.warn('[TaikoPractice] reevaluateCompositionが利用できません');
                 }
               }, 100);
-            } catch (error) {
+            } catch (error: any) {
+              // レンダリング時のエラーは無視（"saveDefaultProps can only be called in the Remotion Studio"エラー）
+              if (error?.message?.includes('can only be called in the Remotion Studio')) {
+                console.log('[TaikoPractice] レンダリング環境のため、updateDefaultPropsをスキップします');
+                return;
+              }
               console.error('[TaikoPractice] updateDefaultPropsでエラーが発生しました:', error);
             }
           } else {
@@ -147,10 +355,11 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
           }
         })
         .catch((error) => {
-          console.error('[TaikoPractice] @remotion/studioの読み込みに失敗しました:', error);
+          // レンダリング時は@remotion/studioが読み込めないため、エラーを無視
+          console.log('[TaikoPractice] @remotion/studioの読み込みに失敗しました（レンダリング環境の可能性）:', error);
         });
     }
-  }, [score]);
+  }, [score, videoSrc]);
   
   // UIとノーツ表示を少し後に有効化（デフォルトでは非表示/OFF）
   useEffect(() => {
@@ -241,9 +450,8 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
       // 動画をBlob URLに変換（videoDataはBlob）
       const blobUrl = URL.createObjectURL(videoData as Blob);
       
-      // Blob URLを設定（先に設定してからメタデータを取得）
+      // Blob URLを保持（クリーンアップ用）
       setVideoBlobUrl(blobUrl);
-      setVideoSrc(blobUrl);
       
       // 古いBlob URLをクリーンアップ（新しいBlob URLを設定した後）
       if (previousBlobUrl) {
@@ -274,6 +482,10 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
         }
       }
       
+      // videoSrcを設定（delayRender/continueRenderのuseEffectが動画の読み込み完了を待つ）
+      // loadProjectFromSupabase内では動画の読み込み完了を待たない（delayRender/continueRenderで処理するため）
+      setVideoSrc(blobUrl);
+      
       console.log('[TaikoPractice] loadProjectFromSupabase完了。scoreを設定します:', {
         duration: scoreData.duration,
         fps: scoreData.fps,
@@ -284,6 +496,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
       setScreenMode('edit');
       
       // 注意: メタデータの更新は、scoreが変更されたときのuseEffectで自動的に実行されます
+      // 動画の読み込み完了後（videoSrcが設定された後）に実行されます
     } catch (error) {
       alert(`プロジェクトの読み込みに失敗しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
     }
@@ -1217,8 +1430,10 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
             startFrom={0}
             volume={1}
             muted={false}
-            onError={() => {
+            onError={(e) => {
               // エラーは無視（動画読み込みエラーはユーザーに表示しない）
+              // OffthreadVideoは自動的にリトライするため、エラーを無視しても問題ない
+              console.warn('[TaikoPractice] OffthreadVideo読み込みエラー（無視して続行）:', e);
             }}
           />
         ) : (

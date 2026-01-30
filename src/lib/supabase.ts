@@ -67,3 +67,17 @@ if (!supabaseUrl || !supabaseAnonKey || supabaseUrl.includes('your_') || supabas
 }
 
 export const supabase = createClient(finalSupabaseUrl, finalSupabaseAnonKey);
+
+/**
+ * Supabase Storageのpublic URLを生成する関数
+ * @param path Storage内のパス（例: "videos/xxx.mp4"）
+ * @returns public URL（例: "https://xxx.supabase.co/storage/v1/object/public/assets/videos/xxx.mp4"）
+ */
+export function getSupabasePublicUrl(path: string): string {
+  if (!path) {
+    return '';
+  }
+  // パスの先頭にスラッシュがある場合は削除
+  const cleanPath = path.startsWith('/') ? path.substring(1) : path;
+  return `${finalSupabaseUrl}/storage/v1/object/public/assets/${cleanPath}`;
+}
