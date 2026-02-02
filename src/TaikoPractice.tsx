@@ -34,7 +34,7 @@ const NOTE_IMAGE_FILES: NoteImageFile[] = [
   "big.png",
 ];
 
-export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: scoreFromProps }) => {
+export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromProps }) => {
   const frame = useCurrentFrame();
   const { fps, width } = useVideoConfig();
   
@@ -100,10 +100,8 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
     }
     
     // そうでない場合はファイルから読み込む
-    // scoreFileが未定義または空の場合はデフォルト値を使用
-    const fileToLoad = scoreFile || "score.json";
+    const fileToLoad = "score.json";
     
-    // scoreFileが変更されたときに再読み込み
     setScore(null); // 読み込み中状態にリセット
     
     fetch(staticFile(fileToLoad))
@@ -119,7 +117,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ scoreFile, score: 
           notes: [],
         });
       });
-  }, [scoreFile, scoreFromProps]);
+  }, [scoreFromProps]);
   
   // 一番近いノーツを常に取得
   // showPassedNotesがtrueの場合は判定枠を過ぎたノーツも含める
