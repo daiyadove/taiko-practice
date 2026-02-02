@@ -61,21 +61,20 @@ pip install -r requirements.txt
 
 ## 使い方
 
-### 1. 動画解析（譜面データ生成）
+動画を
+「taiko-practice/public/videos」の中に入れてください
 
-```bash
-source venv/bin/activate
-python scripts/analyze.py <動画ファイル> -o score.json
-```
+サイトの起動コマンドは「npm start」
+動画が読み込まれなければエラーが出ます
 
-### 2. 練習動画のプレビュー
+サイト上で
+「Space」でUI表示(一度押すと常に表示されます)
+「←」「→」で動画の1フレーム移動
+あとは、UIに全て書かれています
 
-```bash
-npm start  # Remotion Studio起動
-```
+譜面ができたら、譜面をダウンロード
+譜面(score.json)をダウンロードしたら「taiko-practice/public」の中に入れてください
 
-### 3. 練習動画の出力
-
-```bash
-npm run build  # out/video.mp4 に出力
-```
+最後に、サイト上の右にある「ロケットマークとRender」のボタンを押して「Render Video」を押すと動画の出力が始まります
+出力した動画は
+「taiko-practice/out」かサイト上で出力した動画にフォルダアイコンが出るのでそこをクリックで見れます
