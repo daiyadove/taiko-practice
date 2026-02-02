@@ -65,7 +65,6 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
   const [showPassedNotes, setShowPassedNotes] = useState<boolean>(false); // 通過ノーツ表示の有効/無効（デフォルトOFF、少し後にON）
   const [isUploading, setIsUploading] = useState<boolean>(false); // Supabaseアップロード中の状態
   const [isRendering, setIsRendering] = useState<boolean>(false); // 動画レンダリング中の状態
-  const [isPreparingRender, setIsPreparingRender] = useState<boolean>(false); // 動画の出力準備中の状態
   const [hideUI, setHideUI] = useState<boolean>(true); // UI（キー操作パネル・編集パネル）を非表示にするフラグ（デフォルト非表示、少し後に表示）
   
   // 新規制作用の状態
@@ -838,7 +837,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
               e.currentTarget.style.backgroundColor = "#06b6d4";
             }}
           >
-            既存の編集
+            レビュー & 編集
           </button>
         </div>
       </AbsoluteFill>
@@ -984,7 +983,7 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
             ← 戻る
           </button>
           <h2 style={{ fontSize: "54px", fontWeight: "bold" }}>
-            既存プロジェクトを選択
+            プロジェクトを選択
           </h2>
         </div>
         {isLoadingVideos ? (
@@ -1634,72 +1633,6 @@ export const TaikoPractice: React.FC<TaikoPracticeProps> = ({ score: scoreFromPr
               <div style={{ opacity: 0.7 }}>近くにノーツがありません</div>
             </div>
           )}
-          
-          {/* 動画の出力準備ボタン */}
-          <button
-            onClick={() => {
-              setIsPreparingRender(true);
-            }}
-            disabled={!score || isRendering || isPreparingRender}
-            style={{
-              marginTop: "20px",
-              padding: "14px",
-              backgroundColor: (!score || isRendering || isPreparingRender) ? "#666" : "#8b5cf6",
-              color: "white",
-              border: "none",
-              borderRadius: "6px",
-              cursor: (!score || isRendering || isPreparingRender) ? "not-allowed" : "pointer",
-              fontSize: "16px",
-              fontWeight: "500",
-              transition: "background-color 0.2s",
-              width: "100%",
-            }}
-            onMouseEnter={(e) => {
-              if (score && !isRendering && !isPreparingRender) {
-                e.currentTarget.style.backgroundColor = "#7c3aed";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (score && !isRendering && !isPreparingRender) {
-                e.currentTarget.style.backgroundColor = "#8b5cf6";
-              }
-            }}
-          >
-            {isRendering ? "レンダリング中..." : "動画の出力準備"}
-          </button>
-          
-          {/* 動画の出力準備を中止するボタン */}
-          <button
-            onClick={() => {
-              setIsPreparingRender(false);
-            }}
-            disabled={!isPreparingRender}
-            style={{
-              marginTop: "12px",
-              padding: "14px",
-              backgroundColor: !isPreparingRender ? "#666" : "#8b5cf6",
-              color: "white",
-              border: "none",
-              borderRadius: "6px",
-              cursor: !isPreparingRender ? "not-allowed" : "pointer",
-              fontSize: "16px",
-              fontWeight: "500",
-              transition: "background-color 0.2s",
-              width: "100%",
-            }}
-            onMouseEnter={(e) => {
-              if (isPreparingRender) {
-                e.currentTarget.style.backgroundColor = "#7c3aed";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (isPreparingRender) {
-                e.currentTarget.style.backgroundColor = "#8b5cf6";
-              }
-            }}
-          >
-            動画の出力準備を中止する
-          </button>
         </div>
       )}
     </AbsoluteFill>
