@@ -23,7 +23,6 @@ const scoreSchema = z.object({
 
 // 譜面ファイル名または譜面データのスキーマ定義
 export const taikoPracticeSchema = z.object({
-  scoreFile: z.string().optional().describe("譜面データファイル名（publicフォルダ内）"),
   score: scoreSchema.optional().describe("譜面データ（直接指定する場合）"),
 });
 

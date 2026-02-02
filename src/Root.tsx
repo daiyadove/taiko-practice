@@ -17,7 +17,7 @@ export const RemotionRoot: React.FC = () => {
         width={1920}
         height={1080}
         schema={taikoPracticeSchema}
-        defaultProps={{ scoreFile: "" }}
+        defaultProps={{}}
         calculateMetadata={async () => {
           try {
             // 動画ファイルリストを読み込む
